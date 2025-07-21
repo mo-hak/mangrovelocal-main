@@ -1,0 +1,16 @@
+{
+  "name": "mangrove-local",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "prool": "^0.0.24",
+    "viem": "^2.31.3"
+  }
+}
