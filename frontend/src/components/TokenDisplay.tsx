@@ -1,6 +1,7 @@
 'use client'
 
 import { useTokenInfo } from '@/hooks/useTokenInfo'
+import { useEffect, useState } from 'react'
 
 interface TokenDisplayProps {
   address: `0x${string}` | undefined
@@ -16,11 +17,16 @@ export function TokenDisplay({
   className = ""
 }: TokenDisplayProps) {
   const { symbol, name, isLoading } = useTokenInfo(address)
+  const [mounted, setMounted] = useState(false)
 
-  if (isLoading) {
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted || isLoading) {
     return (
-      <span className={`animate-pulse bg-gray-200 dark:bg-gray-700 rounded px-2 py-1 ${className}`}>
-        Loading...
+      <span className={`${className}`}>
+        ...
       </span>
     )
   }

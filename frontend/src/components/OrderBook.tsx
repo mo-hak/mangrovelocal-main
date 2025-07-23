@@ -125,7 +125,9 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   const tkn1Decimals = token1Info.decimals
                   
                   // For asks: wants tkn1, gives tkn0
-                  const price = (Number(formatUnits(BigInt(2 ** Number(offer.tick)), tkn1Decimals - tkn0Decimals + 96))).toFixed(6)
+                  const tickBigInt = BigInt(Math.floor(Math.pow(2, Number(offer.tick))))
+                  const decimalsAdjustment = Number(tkn1Decimals - tkn0Decimals + 96)
+                  const price = (Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn0Decimals)
                   const isMyOffer = isUserOffer(offerDetail.maker)
 
@@ -174,7 +176,9 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   const tkn1Decimals = token1Info.decimals
                   
                   // For bids: wants tkn0, gives tkn1
-                  const price = (1 / Number(formatUnits(BigInt(2 ** Number(offer.tick)), tkn0Decimals - tkn1Decimals + 96))).toFixed(6)
+                  const tickBigInt = BigInt(Math.floor(Math.pow(2, Number(offer.tick))))
+                  const decimalsAdjustment = Number(tkn0Decimals - tkn1Decimals + 96)
+                  const price = (1 / Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn1Decimals)
                   const isMyOffer = isUserOffer(offerDetail.maker)
 

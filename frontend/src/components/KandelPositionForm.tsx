@@ -5,16 +5,16 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagm
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { useOpenMarkets, useGlobalConfig, useMarketConfig } from '@/hooks/useMangrove'
 import { CONTRACTS } from '@/utils/config'
-import { parseUnits, formatUnits } from 'viem'
+import { parseUnits, formatUnits, decodeEventLog } from 'viem'
 
 // Import MGV library functions
 import { 
   validateKandelParams,
-  getKandelPositionRawParams,
   type RawKandelParams,
   type ValidateParamsResult,
   type RawKandelPositionParams,
-  type MarketParams
+  type MarketParams,
+  type Token
 } from '@mangrovedao/mgv'
 
 import { kandelSeederABI } from '@/abi/kandelSeeder'
@@ -25,6 +25,13 @@ export function KandelPositionForm() {
   const { address } = useAccount()
   const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
   const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
+  
+  // Handle hydration mismatch
+  const [mounted, setMounted] = useState(false)
+  
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Fetch available markets
   const { data: marketsData, isLoading: marketsLoading } = useOpenMarkets()
@@ -38,12 +45,13 @@ export function KandelPositionForm() {
   const [pricePoints, setPricePoints] = useState<number>(10)
   const [stepSize, setStepSize] = useState<number>(2)
 
-  // Phase 2: Funding Parameters
+  // Phase 2: Funding Parameters (only shown after Phase 1 validation)
   const [baseAmount, setBaseAmount] = useState<string>('')
   const [quoteAmount, setQuoteAmount] = useState<string>('')
 
   // Validation State
-  const [validationResult, setValidationResult] = useState<ValidateParamsResult | null>(null)
+  const [phase1ValidationResult, setPhase1ValidationResult] = useState<ValidateParamsResult | null>(null)
+  const [finalValidationResult, setFinalValidationResult] = useState<ValidateParamsResult | null>(null)
   const [isValidating, setIsValidating] = useState(false)
   const [validationError, setValidationError] = useState<string>('')
 
@@ -71,83 +79,244 @@ export function KandelPositionForm() {
     selectedMarket?.tkn1 || '0x0'
   )
 
-  // Validate parameters when inputs change
+  // Phase 1 validation: Get minimums with mock amounts (per Position_Creation_doc.md)
   useEffect(() => {
-    if (!selectedMarket || !minPrice || !maxPrice || !midPrice || 
-        !baseTokenInfo.decimals || !quoteTokenInfo.decimals ||
-        !globalConfig || !marketConfigData) {
-      setValidationResult(null)
+    // Only validate Phase 1 if all required data is available and we have prices
+    if (!selectedMarket || !baseTokenInfo.decimals || !quoteTokenInfo.decimals ||
+        !globalConfig || !marketConfigData || 
+        !baseTokenInfo.symbol || !quoteTokenInfo.symbol ||
+        baseTokenInfo.symbol === 'UNKNOWN' || quoteTokenInfo.symbol === 'UNKNOWN') {
+      setPhase1ValidationResult(null)
       return
     }
 
-    const validateParams = async () => {
+    // Skip validation if Phase 1 prices are not filled yet
+    if (!minPrice || !maxPrice || !midPrice) {
+      setPhase1ValidationResult(null)
+      return
+    }
+
+    // Check for valid numbers
+    const minPriceNum = parseFloat(minPrice)
+    const maxPriceNum = parseFloat(maxPrice)
+    const midPriceNum = parseFloat(midPrice)
+
+    if (isNaN(minPriceNum) || isNaN(maxPriceNum) || isNaN(midPriceNum)) {
+      setValidationError('Please enter valid numbers for price fields')
+      setPhase1ValidationResult(null)
+      return
+    }
+
+    // Check price range logic
+    if (minPriceNum <= 0 || maxPriceNum <= 0 || midPriceNum <= 0) {
+      setValidationError('All prices must be greater than 0')
+      setPhase1ValidationResult(null)
+      return
+    }
+
+    if (minPriceNum >= maxPriceNum) {
+      setValidationError('Min price must be less than max price')
+      setPhase1ValidationResult(null)
+      return
+    }
+
+    if (midPriceNum < minPriceNum || midPriceNum > maxPriceNum) {
+      setValidationError('Mid price must be between min and max price')
+      setPhase1ValidationResult(null)
+      return
+    }
+
+    const validatePhase1 = async () => {
+      // Create market params for mgv library with proper Token objects
+      const baseToken: Token = {
+        address: selectedMarket.tkn0,
+        symbol: baseTokenInfo.symbol,
+        decimals: baseTokenInfo.decimals,
+        displayDecimals: Math.min(baseTokenInfo.decimals, 4),
+        priceDisplayDecimals: 4,
+        mgvTestToken: true
+      }
+
+      const quoteToken: Token = {
+        address: selectedMarket.tkn1,
+        symbol: quoteTokenInfo.symbol,
+        decimals: quoteTokenInfo.decimals,
+        displayDecimals: Math.min(quoteTokenInfo.decimals, 4),
+        priceDisplayDecimals: 2,
+        mgvTestToken: true
+      }
+
+      const market: MarketParams = {
+        base: baseToken,
+        quote: quoteToken,
+        tickSpacing: selectedMarket.tickSpacing
+      }
+
       try {
         setIsValidating(true)
         setValidationError('')
 
-        // Create market params for mgv library
-        const market: MarketParams = {
-          base: selectedMarket.tkn0,
-          quote: selectedMarket.tkn1,
-          tickSpacing: selectedMarket.tickSpacing
-        }
-
-        // Convert human prices to raw params
+        // Phase 1: Call validateKandelParams with mock amounts to get minimums
+        // As per Position_Creation_doc.md: "using placeholder values for the inventory (e.g., baseAmount: 0n, quoteAmount: 0n)"
         const positionParams: RawKandelPositionParams = {
           market,
           minPrice: parseFloat(minPrice),
           maxPrice: parseFloat(maxPrice),
           midPrice: parseFloat(midPrice),
-          pricePoints: BigInt(pricePoints),
+          pricePoints: Number(pricePoints),
           adjust: true
-        }
+        } as any
 
-        const rawPositionParams = getKandelPositionRawParams(positionParams)
-
-        // Parse amounts or use zero for initial validation
-        const baseAmountParsed = baseAmount ? parseUnits(baseAmount, baseTokenInfo.decimals) : 0n
-        const quoteAmountParsed = quoteAmount ? parseUnits(quoteAmount, quoteTokenInfo.decimals) : 0n
-
-        // Validate with full parameters
-        const validationParams: RawKandelParams = {
+        // Phase 1 validation with mock amounts to get minimums
+        const phase1ValidationParams: RawKandelParams = {
           ...positionParams,
-          baseAmount: baseAmountParsed,
-          quoteAmount: quoteAmountParsed,
-          stepSize: BigInt(stepSize),
-          gasreq: 250_000n, // Standard gas requirement
+          baseAmount: 0n, // Mock amount as per doc
+          quoteAmount: 0n, // Mock amount as per doc 
+          stepSize: Number(stepSize), // Helper library needs Number
+          gasreq: 250000, // Helper library needs Number
           factor: 1, // 100% of minVolume
-          asksLocalConfig: marketConfigData.config01,
-          bidsLocalConfig: marketConfigData.config10,
-          marketConfig: globalConfig,
-        }
+          asksLocalConfig: marketConfigData?.config01 as any,
+          bidsLocalConfig: marketConfigData?.config10 as any,
+          marketConfig: globalConfig!,
+        } as any
 
-        const result = validateKandelParams(validationParams)
-        setValidationResult(result)
-
-        if (!result.isValid && baseAmount && quoteAmount) {
-          setValidationError('Amounts below minimum requirements')
-        } else {
-          setValidationError('')
-        }
+                  const result = validateKandelParams(phase1ValidationParams)
+        setPhase1ValidationResult(result)
+        setValidationError('')
       } catch (error) {
-        console.error('Validation error:', error)
-        setValidationError(error instanceof Error ? error.message : 'Validation failed')
-        setValidationResult(null)
+        console.error('Phase 1 validation error:', error)
+        
+        let errorMessage = 'Validation failed'
+        if (error instanceof Error) {
+          console.error('Error message:', error.message)
+          if (error.message.includes('NaN')) {
+            errorMessage = 'Please enter valid numbers for all price fields'
+          } else {
+            errorMessage = error.message
+          }
+        }
+        setValidationError(errorMessage)
+        setPhase1ValidationResult(null)
       } finally {
         setIsValidating(false)
       }
     }
 
-    validateParams()
+    validatePhase1()
   }, [
     selectedMarket, minPrice, maxPrice, midPrice, pricePoints, stepSize,
-    baseAmount, quoteAmount, baseTokenInfo.decimals, quoteTokenInfo.decimals,
+    baseTokenInfo.decimals, quoteTokenInfo.decimals, baseTokenInfo.symbol, quoteTokenInfo.symbol,
     globalConfig, marketConfigData
   ])
 
+  // Phase 2 validation: Validate with actual user amounts
+  useEffect(() => {
+    // Only run Phase 2 validation if we have a Phase 1 result and user has entered amounts
+    if (!phase1ValidationResult || !baseAmount || !quoteAmount) {
+      setFinalValidationResult(phase1ValidationResult)
+      return
+    }
+
+    // Check for valid amounts
+    const baseAmountNum = parseFloat(baseAmount)
+    const quoteAmountNum = parseFloat(quoteAmount)
+
+    if (isNaN(baseAmountNum) || isNaN(quoteAmountNum) || baseAmountNum <= 0 || quoteAmountNum <= 0) {
+      setValidationError('Please enter valid amounts')
+      setFinalValidationResult(null)
+      return
+    }
+
+    const validatePhase2 = async () => {
+      try {
+        setIsValidating(true)
+        
+        // Parse user amounts
+        let baseAmountParsed: bigint
+        let quoteAmountParsed: bigint
+
+        try {
+          baseAmountParsed = parseUnits(baseAmount as `${number}`, baseTokenInfo.decimals)
+        } catch (error) {
+          console.error('Error parsing base amount:', error)
+          setValidationError('Invalid base token amount')
+          return
+        }
+
+        try {
+          quoteAmountParsed = parseUnits(quoteAmount as `${number}`, quoteTokenInfo.decimals)
+        } catch (error) {
+          console.error('Error parsing quote amount:', error)
+          setValidationError('Invalid quote token amount')
+          return
+        }
+
+        // Create Token objects
+        const baseToken: Token = {
+          address: selectedMarket.tkn0,
+          symbol: baseTokenInfo.symbol,
+          decimals: baseTokenInfo.decimals,
+          displayDecimals: Math.min(baseTokenInfo.decimals, 4),
+          priceDisplayDecimals: 4,
+          mgvTestToken: true
+        }
+
+        const quoteToken: Token = {
+          address: selectedMarket.tkn1,
+          symbol: quoteTokenInfo.symbol,
+          decimals: quoteTokenInfo.decimals,
+          displayDecimals: Math.min(quoteTokenInfo.decimals, 4),
+          priceDisplayDecimals: 2,
+          mgvTestToken: true
+        }
+
+        const market: MarketParams = {
+          base: baseToken,
+          quote: quoteToken,
+          tickSpacing: selectedMarket.tickSpacing
+        }
+
+        // Phase 2 validation with actual user amounts
+        const phase2ValidationParams: RawKandelParams = {
+          market,
+          minPrice: parseFloat(minPrice),
+          maxPrice: parseFloat(maxPrice),
+          midPrice: parseFloat(midPrice),
+          pricePoints: Number(pricePoints),
+          adjust: true,
+          baseAmount: baseAmountParsed,
+          quoteAmount: quoteAmountParsed,
+          stepSize: Number(stepSize),
+          gasreq: 250_000,
+          factor: 1,
+          asksLocalConfig: marketConfigData?.config01 as any,
+          bidsLocalConfig: marketConfigData?.config10 as any,
+          marketConfig: globalConfig!,
+        } as any
+
+                  const result = validateKandelParams(phase2ValidationParams)
+        setFinalValidationResult(result)
+
+        if (!result.isValid) {
+          setValidationError('Amounts below minimum requirements')
+        } else {
+          setValidationError('')
+        }
+      } catch (error) {
+        console.error('Phase 2 validation error:', error)
+        setValidationError('Validation failed with entered amounts')
+        setFinalValidationResult(null)
+      } finally {
+        setIsValidating(false)
+      }
+    }
+
+    validatePhase2()
+  }, [phase1ValidationResult, baseAmount, quoteAmount, selectedMarket, minPrice, maxPrice, midPrice, pricePoints, stepSize, baseTokenInfo.decimals, quoteTokenInfo.decimals, baseTokenInfo.symbol, quoteTokenInfo.symbol, globalConfig, marketConfigData])
+
   // Step 1: Deploy Kandel Contract
   const deployKandel = async () => {
-    if (!selectedMarket || !validationResult) return
+    if (!selectedMarket || !finalValidationResult) return
 
     setCurrentStep('deploying')
 
@@ -173,7 +342,7 @@ export function KandelPositionForm() {
 
   // Step 2: Approve Base Token
   const approveBaseToken = async () => {
-    if (!deployedKandelAddress || !validationResult || !baseAmount) return
+    if (!deployedKandelAddress || !finalValidationResult || !baseAmount) return
 
     setCurrentStep('approving-base')
 
@@ -193,7 +362,7 @@ export function KandelPositionForm() {
 
   // Step 3: Approve Quote Token
   const approveQuoteToken = async () => {
-    if (!deployedKandelAddress || !validationResult || !quoteAmount) return
+    if (!deployedKandelAddress || !finalValidationResult || !quoteAmount) return
 
     setCurrentStep('approving-quote')
 
@@ -213,32 +382,32 @@ export function KandelPositionForm() {
 
   // Step 4: Populate Kandel with offers
   const populateKandel = async () => {
-    if (!deployedKandelAddress || !validationResult) return
+    if (!deployedKandelAddress || !finalValidationResult) return
 
     setCurrentStep('populating')
 
     try {
-      await writeContract({
+      await (writeContract as any)({
         address: deployedKandelAddress,
         abi: kandelLibABI,
         functionName: 'populateFromOffset',
         args: [
-          0, // from
-          validationResult.params.pricePoints, // to
-          validationResult.params.baseQuoteTickIndex0,
-          validationResult.params._baseQuoteTickOffset,
-          validationResult.params.firstAskIndex,
-          validationResult.params.bidGives,
-          validationResult.params.askGives,
+          BigInt(0), // from
+          BigInt(finalValidationResult.params.pricePoints), // to
+          finalValidationResult.params.baseQuoteTickIndex0,
+          finalValidationResult.params.baseQuoteTickOffset,
+          finalValidationResult.params.firstAskIndex,
+          finalValidationResult.params.bidGives,
+          finalValidationResult.params.askGives,
           {
-            gasprice: validationResult.rawParams.gasprice,
-            gasreq: validationResult.rawParams.gasreq,
-            stepSize: validationResult.rawParams.stepSize,
+            gasprice: BigInt(250000), // now a uint256
+            gasreq: BigInt(finalValidationResult.rawParams.gasreq),
+            stepSize: BigInt(finalValidationResult.rawParams.stepSize),
           },
-          validationResult.rawParams.baseAmount,
-          validationResult.rawParams.quoteAmount,
+          finalValidationResult.rawParams.baseAmount,
+          finalValidationResult.rawParams.quoteAmount,
         ],
-        value: validationResult.minProvision,
+        value: finalValidationResult.minProvision,
       })
     } catch (error) {
       console.error('Populate Kandel error:', error)
@@ -248,27 +417,95 @@ export function KandelPositionForm() {
 
   // Handle transaction completion
   useEffect(() => {
-    if (txReceipt && txReceipt.status === 'success') {
+    if (txReceipt) {
+      if (txReceipt.status === 'reverted') {
+        setValidationError('Transaction failed. Please try again.')
+        setCurrentStep('form')
+        return
+      }
+      
+      if (txReceipt.status === 'success') {
       switch (currentStep) {
         case 'deploying':
-          // Extract Kandel address from logs (simplified - in real implementation you'd parse the event)
-          // For now, we'll simulate this by creating a dummy address
-          const dummyKandelAddress = '0x1234567890123456789012345678901234567890' as `0x${string}`
-          setDeployedKandelAddress(dummyKandelAddress)
-          approveBaseToken()
+          // Extract Kandel address from NewKandel event
+          try {
+            // Parse NewKandel event from transaction logs
+            const newKandelEvent = txReceipt.logs.find(
+              (log) => {
+                try {
+                  const decoded = decodeEventLog({
+                    abi: kandelSeederABI,
+                    data: log.data,
+                    topics: log.topics,
+                  })
+                  return decoded.eventName === 'NewKandel'
+                } catch {
+                  return false
+                }
+              }
+            )
+            
+            if (newKandelEvent) {
+              const decoded = decodeEventLog({
+                abi: kandelSeederABI,
+                data: newKandelEvent.data,
+                topics: newKandelEvent.topics,
+              })
+              const kandelAddress = (decoded.args as any).kandel as `0x${string}`
+              setDeployedKandelAddress(kandelAddress)
+            } else {
+              throw new Error('NewKandel event not found in transaction logs')
+            }
+          } catch (error) {
+            console.error('Failed to extract Kandel address:', error)
+            setValidationError('Failed to extract Kandel address from transaction')
+            setCurrentStep('form')
+            return
+          }
+          setTimeout(() => approveBaseToken(), 1000) // Add small delay for reliability
           break
         case 'approving-base':
-          approveQuoteToken()
+          setTimeout(() => approveQuoteToken(), 1000)
           break
         case 'approving-quote':
-          populateKandel()
+          setTimeout(() => populateKandel(), 1000)
           break
         case 'populating':
           setCurrentStep('completed')
           break
       }
     }
-  }, [txReceipt, currentStep])
+  }}, [txReceipt, currentStep])
+  
+  // Reset form and errors when starting over
+  const resetForm = () => {
+    setCurrentStep('form')
+    setDeployedKandelAddress(null)
+    setValidationError('')
+    setMinPrice('')
+    setMaxPrice('')
+    setMidPrice('')
+    setPricePoints(10)
+    setStepSize(2)
+    setBaseAmount('')
+    setQuoteAmount('')
+    setPhase1ValidationResult(null)
+    setFinalValidationResult(null)
+  }
+
+  if (!mounted) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded"></div>
+            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-5/6"></div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!address) {
     return (
@@ -322,33 +559,54 @@ export function KandelPositionForm() {
                 <input
                   type="number"
                   step="any"
+                  min="0"
                   value={minPrice}
-                  onChange={(e) => setMinPrice(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                      setMinPrice(value)
+                    }
+                  }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="0.0"
+                  placeholder="1500"
                 />
+                <div className="text-xs text-gray-500 mt-1">Lower bound of price range</div>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Mid Price</label>
                 <input
                   type="number"
                   step="any"
+                  min="0"
                   value={midPrice}
-                  onChange={(e) => setMidPrice(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                      setMidPrice(value)
+                    }
+                  }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="0.0"
+                  placeholder="2000"
                 />
+                <div className="text-xs text-gray-500 mt-1">Current market price</div>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Max Price</label>
                 <input
                   type="number"
                   step="any"
+                  min="0"
                   value={maxPrice}
-                  onChange={(e) => setMaxPrice(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                      setMaxPrice(value)
+                    }
+                  }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="0.0"
+                  placeholder="2500"
                 />
+                <div className="text-xs text-gray-500 mt-1">Upper bound of price range</div>
               </div>
             </div>
 
@@ -378,8 +636,8 @@ export function KandelPositionForm() {
             </div>
           </div>
 
-          {/* Phase 2: Funding with real-time guidance */}
-          {validationResult && (
+          {/* Phase 2: Funding (only shown after Phase 1 validation) */}
+          {phase1ValidationResult && (
             <div className="space-y-4 mb-6">
               <h4 className="font-medium text-gray-900 dark:text-white">Phase 2: Initial Funding</h4>
               
@@ -391,13 +649,19 @@ export function KandelPositionForm() {
                   <input
                     type="number"
                     step="any"
+                    min="0"
                     value={baseAmount}
-                    onChange={(e) => setBaseAmount(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                        setBaseAmount(value)
+                      }
+                    }}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                    placeholder="0.0"
+                    placeholder="0.1"
                   />
                   <div className="text-xs text-gray-500 mt-1">
-                    Minimum required: {formatUnits(validationResult.minBaseAmount, baseTokenInfo.decimals)}
+                    Minimum required: {phase1ValidationResult.minBaseAmount ? formatUnits(phase1ValidationResult.minBaseAmount, baseTokenInfo.decimals) : '0'}
                   </div>
                 </div>
 
@@ -408,13 +672,19 @@ export function KandelPositionForm() {
                   <input
                     type="number"
                     step="any"
+                    min="0"
                     value={quoteAmount}
-                    onChange={(e) => setQuoteAmount(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                        setQuoteAmount(value)
+                      }
+                    }}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                    placeholder="0.0"
+                    placeholder="100"
                   />
                   <div className="text-xs text-gray-500 mt-1">
-                    Minimum required: {formatUnits(validationResult.minQuoteAmount, quoteTokenInfo.decimals)}
+                    Minimum required: {phase1ValidationResult.minQuoteAmount ? formatUnits(phase1ValidationResult.minQuoteAmount, quoteTokenInfo.decimals) : '0'}
                   </div>
                 </div>
               </div>
@@ -422,7 +692,7 @@ export function KandelPositionForm() {
               {/* Gas Provision Display */}
               <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg">
                 <div className="text-sm">
-                  <strong>Required Provision:</strong> {formatUnits(validationResult.minProvision, 18)} ETH
+                  <strong>Required Provision:</strong> {phase1ValidationResult.minProvision ? formatUnits(phase1ValidationResult.minProvision, 18) : '0'} ETH
                 </div>
                 <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                   This amount covers gas costs for potential failed deliveries and will be paid from your wallet.
@@ -447,7 +717,7 @@ export function KandelPositionForm() {
           {/* Create Position Button */}
           <button
             onClick={deployKandel}
-            disabled={!validationResult?.isValid || isValidating || isWritePending}
+            disabled={!finalValidationResult?.isValid || isValidating || isWritePending}
             className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isWritePending ? 'Creating Position...' : 'Create Kandel Position'}
