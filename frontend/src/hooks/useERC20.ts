@@ -1,7 +1,7 @@
 'use client'
 
 import { useReadContract, useWriteContract, useAccount } from 'wagmi'
-import { erc20Abi } from '@/abi/erc20'
+import { erc20Abi } from '@/utils/abi/erc20'
 
 export function useTokenBalance(tokenAddress: `0x${string}`) {
   const { address } = useAccount()

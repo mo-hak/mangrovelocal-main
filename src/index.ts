@@ -201,10 +201,10 @@ async function main() {
     parseUnits("1", 18),
     parseUnits("1", 18)
   );
-    await mintToken(token0, parseUnits("0.001", 18));
-    await mintToken(token1, parseUnits("1", 6));
-    await mintToken(token2, parseUnits("1", 18));
-    await mintToken(token3, parseUnits("1", 18));
+    await mintToken(token0, parseUnits("100", 18));
+    await mintToken(token1, parseUnits("1000", 6));
+    await mintToken(token2, parseUnits("1000", 18));
+    await mintToken(token3, parseUnits("1100", 18));
 }
 
 main().then(() => {

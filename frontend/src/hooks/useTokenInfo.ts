@@ -1,7 +1,7 @@
 'use client'
 
 import { useReadContract } from 'wagmi'
-import { erc20Abi } from '@/abi/erc20'
+import { erc20Abi } from '@/utils/abi/erc20'
 import { CONTRACTS, TOKENS } from '@/utils/config'
 
 export function useTokenInfo(tokenAddress: `0x${string}` | undefined) {

@@ -2,9 +2,9 @@
 
 import { useReadContract, useWriteContract } from 'wagmi'
 import { CONTRACTS } from '@/utils/config'
-import { readerAbi } from '@/abi/reader'
-import { MangroveABI } from '@/abi/mangrove'
-import { kandelSeederABI } from '@/abi/kandelSeeder'
+import { readerAbi } from '@/utils/abi/reader'
+import { MangroveABI } from '@/utils/abi/mangrove'
+import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
 
 export function useOpenMarkets() {
   return useReadContract({
