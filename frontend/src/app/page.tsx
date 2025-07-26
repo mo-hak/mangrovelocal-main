@@ -2,7 +2,7 @@
 
 import { WalletConnect } from '@/components/WalletConnect'
 import { OrderBook } from '@/components/OrderBook'
-import { KandelPositionForm } from '@/components/KandelPositionForm'
+import { KandelPositionManager } from '@/components/KandelPositionManager'
 import ErrorBoundary from '@/components/ErrorBoundary'
 
 export default function Home() {
@@ -19,7 +19,9 @@ export default function Home() {
 
         <div className="grid lg:grid-cols-2 gap-6">
           <OrderBook />
-            <KandelPositionForm />
+          <div>
+            <KandelPositionManager />
+          </div>
         </div>
       </div>
     </main>

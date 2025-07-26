@@ -15,14 +15,19 @@ import {
   type ValidateParamsResult,
   type RawKandelPositionParams,
   type MarketParams,
-  type Token
+  type Token,
+  type LocalConfig
 } from '@mangrovedao/mgv'
 
 import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
 import { kandelLibABI } from '@/utils/abi/kandelLib'
 import { erc20Abi } from '@/utils/abi/erc20'
 
-export function KandelPositionForm() {
+interface KandelPositionFormProps {
+  onPositionCreated?: () => void
+}
+
+export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProps = {}) {
   const { address } = useAccount()
   const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
   const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
@@ -58,7 +63,8 @@ export function KandelPositionForm() {
   const [validationError, setValidationError] = useState<string>('')
 
   // Transaction State
-  const [currentStep, setCurrentStep] = useState<'form' | 'deploying' | 'approving-base' | 'approving-quote' | 'populating' | 'completed'>('form')
+  type TransactionStep = 'form' | 'deploying' | 'approving-base' | 'approving-quote' | 'populating' | 'completed'
+  const [currentStep, setCurrentStep] = useState<TransactionStep>('form')
   const [deployedKandelAddress, setDeployedKandelAddress] = useState<`0x${string}` | null>(null)
 
   const selectedMarket = markets[selectedMarketIndex]
@@ -68,10 +74,8 @@ export function KandelPositionForm() {
   const quoteTokenInfo = useTokenInfo(selectedMarket?.tkn1)
 
   // Format token names for display
-  const formatTokenName = (address: `0x${string}`) => {
-    if (address === CONTRACTS.WETH) return 'WETH'
-    if (address === CONTRACTS.USDC) return 'USDC'
-    return `${address.slice(0, 6)}...${address.slice(-4)}`
+  const formatTokenName = (address: `0x${string}`, symbol?: string) => {
+    return symbol || `${address.slice(0, 6)}...${address.slice(-4)}`
   }
 
   // Fetch configurations needed for validation
@@ -129,43 +133,20 @@ export function KandelPositionForm() {
     }
 
     const validatePhase1 = async () => {
-      // Create market params for mgv library with proper Token objects
-      const baseToken: Token = {
-        address: selectedMarket.tkn0,
-        symbol: baseTokenInfo.symbol,
-        decimals: baseTokenInfo.decimals,
-        displayDecimals: Math.min(baseTokenInfo.decimals, 4),
-        priceDisplayDecimals: 4,
-        mgvTestToken: true
-      } as Token
-
-      const quoteToken: Token = {
-        address: selectedMarket.tkn1,
-        symbol: quoteTokenInfo.symbol,
-        decimals: quoteTokenInfo.decimals,
-        displayDecimals: Math.min(quoteTokenInfo.decimals, 4),
-        priceDisplayDecimals: 2,
-        mgvTestToken: true
-      } as Token
-
-      const market: MarketParams = {
-        base: baseToken,
-        quote: quoteToken,
-        tickSpacing: selectedMarket.tickSpacing
-      }
+      const setup = createValidationSetup()
+      if (!setup) return
 
       try {
         setIsValidating(true)
         setValidationError('')
 
         // Phase 1: Call validateKandelParams with mock amounts to get minimums
-        // As per Position_Creation_doc.md: "using placeholder values for the inventory (e.g., baseAmount: 0n, quoteAmount: 0n)"
         const positionParams: RawKandelPositionParams = {
-          market,
+          market: setup.market,
           minPrice: parseFloat(minPrice),
           maxPrice: parseFloat(maxPrice),
           midPrice: parseFloat(midPrice),
-          pricePoints: BigInt(pricePoints), // Convert to bigint
+          pricePoints: BigInt(pricePoints),
           adjust: true
         } as any
 
@@ -174,33 +155,21 @@ export function KandelPositionForm() {
           ...positionParams,
           baseAmount: BigInt(0), // Mock amount as per doc
           quoteAmount: BigInt(0), // Mock amount as per doc 
-          stepSize: BigInt(stepSize), // Convert to bigint as expected by validateKandelParams
-          gasreq: BigInt(128_000), // Use 128_000n as per Implementation Plan document
+          stepSize: BigInt(stepSize),
+          gasreq: 121413n,
           factor: 1, // 100% of minVolume
-          asksLocalConfig: {
-            ...marketConfigData!.config01,
-            density: Number(marketConfigData!.config01.density),
-            rawDensity: marketConfigData!.config01.density,
-            offer_gasbase: marketConfigData!.config01.kilo_offer_gasbase / BigInt(1000)
-          },
-          bidsLocalConfig: {
-            ...marketConfigData!.config10,
-            density: Number(marketConfigData!.config10.density),
-            rawDensity: marketConfigData!.config10.density,
-            offer_gasbase: marketConfigData!.config10.kilo_offer_gasbase / BigInt(1000)
-          },
-          marketConfig: globalConfig!,
+          asksLocalConfig: setup.asksLocalConfigData,
+          bidsLocalConfig: setup.bidsLocalConfigData,
+          // marketConfig: globalConfig!,
+          marketConfig: setup._globalConfig,
         } as any
 
         const result = validateKandelParams(phase1ValidationParams)
         setPhase1ValidationResult(result)
         setValidationError('')
       } catch (error) {
-        console.error('Phase 1 validation error:', error)
-        
         let errorMessage = 'Validation failed'
         if (error instanceof Error) {
-          console.error('Error message:', error.message)
           if (error.message.includes('NaN')) {
             errorMessage = 'Please enter valid numbers for all price fields'
           } else {
@@ -240,6 +209,9 @@ export function KandelPositionForm() {
     }
 
     const validatePhase2 = async () => {
+      const setup = createValidationSetup()
+      if (!setup) return
+
       try {
         setIsValidating(true)
         
@@ -250,7 +222,6 @@ export function KandelPositionForm() {
         try {
           baseAmountParsed = parseUnits(baseAmount as `${number}`, baseTokenInfo.decimals)
         } catch (error) {
-          console.error('Error parsing base amount:', error)
           setValidationError('Invalid base token amount')
           return
         }
@@ -258,39 +229,13 @@ export function KandelPositionForm() {
         try {
           quoteAmountParsed = parseUnits(quoteAmount as `${number}`, quoteTokenInfo.decimals)
         } catch (error) {
-          console.error('Error parsing quote amount:', error)
           setValidationError('Invalid quote token amount')
           return
         }
 
-        // Create Token objects
-        const baseToken: Token = {
-          address: selectedMarket.tkn0,
-          symbol: baseTokenInfo.symbol,
-          decimals: baseTokenInfo.decimals,
-          displayDecimals: Math.min(baseTokenInfo.decimals, 4),
-          priceDisplayDecimals: 4,
-          mgvTestToken: true
-        } as Token
-
-        const quoteToken: Token = {
-          address: selectedMarket.tkn1,
-          symbol: quoteTokenInfo.symbol,
-          decimals: quoteTokenInfo.decimals,
-          displayDecimals: Math.min(quoteTokenInfo.decimals, 4),
-          priceDisplayDecimals: 2,
-          mgvTestToken: true
-        } as Token
-
-        const market: MarketParams = {
-          base: baseToken,
-          quote: quoteToken,
-          tickSpacing: selectedMarket.tickSpacing
-        }
-
         // Phase 2 validation with actual user amounts
         const phase2ValidationParams: RawKandelParams = {
-          market,
+          market: setup.market,
           minPrice: parseFloat(minPrice),
           maxPrice: parseFloat(maxPrice),
           midPrice: parseFloat(midPrice),
@@ -299,21 +244,11 @@ export function KandelPositionForm() {
           baseAmount: baseAmountParsed,
           quoteAmount: quoteAmountParsed,
           stepSize: BigInt(stepSize),
-          gasreq: BigInt(128_000),
+          gasreq: 121413n,
           factor: 1,
-          asksLocalConfig: {
-            ...marketConfigData.config01,
-            density: Number(marketConfigData.config01.density),
-            rawDensity: marketConfigData.config01.density,
-            offer_gasbase: marketConfigData.config01.kilo_offer_gasbase / BigInt(1000)
-          },
-          bidsLocalConfig: {
-            ...marketConfigData.config10,
-            density: Number(marketConfigData.config10.density),
-            rawDensity: marketConfigData.config10.density,
-            offer_gasbase: marketConfigData.config10.kilo_offer_gasbase / BigInt(1000)
-          },
-          marketConfig: globalConfig!,
+          asksLocalConfig: setup.asksLocalConfigData,
+          bidsLocalConfig: setup.bidsLocalConfigData,
+          marketConfig: setup._globalConfig,
         } as any
 
         const result = validateKandelParams(phase2ValidationParams)
@@ -325,7 +260,6 @@ export function KandelPositionForm() {
           setValidationError('')
         }
       } catch (error) {
-        console.error('Phase 2 validation error:', error)
         setValidationError('Validation failed with entered amounts')
         setFinalValidationResult(null)
       } finally {
@@ -367,23 +301,13 @@ export function KandelPositionForm() {
   const approveBaseToken = async (kandelAddress?: `0x${string}`) => {
     const addressToUse = kandelAddress || deployedKandelAddress
     
-    console.log('🔍 approveBaseToken called with:')
-    console.log('- kandelAddress param:', kandelAddress)
-    console.log('- deployedKandelAddress state:', deployedKandelAddress)
-    console.log('- addressToUse:', addressToUse)
-    console.log('- finalValidationResult:', !!finalValidationResult)
-    console.log('- baseAmount:', baseAmount)
-    
-    if (!addressToUse || !finalValidationResult || !baseAmount) {
-      console.log('❌ Approval cancelled - missing requirements')
+    if (!addressToUse || !finalValidationResult || !quoteAmount) {
       return
     }
-
     setCurrentStep('approving-base')
 
     try {
       const amount = parseUnits(baseAmount, baseTokenInfo.decimals)
-      console.log('💰 Approving', amount.toString(), 'base tokens for', addressToUse)
       
       const tx = await writeContract({
         address: selectedMarket.tkn0,
@@ -391,9 +315,7 @@ export function KandelPositionForm() {
         functionName: 'approve',
         args: [addressToUse, amount],
       })
-      console.log('✅ Base token approval transaction submitted:', tx)
     } catch (error) {
-      console.error('❌ Approve base token error:', error)
       setCurrentStep('form')
     }
   }
@@ -402,15 +324,7 @@ export function KandelPositionForm() {
   const approveQuoteToken = async (kandelAddress?: `0x${string}`) => {
     const addressToUse = kandelAddress || deployedKandelAddress
     
-    console.log('🔍 approveQuoteToken called with:')
-    console.log('- kandelAddress param:', kandelAddress)
-    console.log('- deployedKandelAddress state:', deployedKandelAddress)
-    console.log('- addressToUse:', addressToUse)
-    console.log('- finalValidationResult:', !!finalValidationResult)
-    console.log('- quoteAmount:', quoteAmount)
-    
     if (!addressToUse || !finalValidationResult || !quoteAmount) {
-      console.log('❌ Quote approval cancelled - missing requirements')
       return
     }
 
@@ -418,291 +332,257 @@ export function KandelPositionForm() {
 
     try {
       const amount = parseUnits(quoteAmount, quoteTokenInfo.decimals)
-      console.log('💰 Approving', amount.toString(), 'quote tokens for', addressToUse)
       
-      const tx = await writeContract({
+      await writeContract({
         address: selectedMarket.tkn1,
         abi: erc20Abi,
         functionName: 'approve',
         args: [addressToUse, amount],
       })
-      console.log('✅ Quote token approval transaction submitted:', tx)
     } catch (error) {
-      console.error('❌ Approve quote token error:', error)
       setCurrentStep('form')
     }
   }
 
   // Step 4: Populate Kandel with offers
   const populateKandel = async (kandelAddress?: `0x${string}`) => {
-    console.log('🚀 populateKandel function CALLED!')
-    console.log('📍 Function entry point reached')
-    
     const addressToUse = kandelAddress || deployedKandelAddress
     
-    console.log('🔍 populateKandel called with:')
-    console.log('- kandelAddress param:', kandelAddress)
-    console.log('- deployedKandelAddress state:', deployedKandelAddress)
-    console.log('- addressToUse:', addressToUse)
-    console.log('- finalValidationResult:', !!finalValidationResult)
-    console.log('- finalValidationResult object:', finalValidationResult)
-    
-    if (!addressToUse || !finalValidationResult) {
-      console.log('❌ Populate cancelled - missing requirements')
-      console.log('❌ addressToUse exists:', !!addressToUse)
-      console.log('❌ finalValidationResult exists:', !!finalValidationResult)
+    // Guard clauses for required parameters
+    if (!addressToUse || !finalValidationResult || !globalConfig) {
       return
     }
-
-    console.log('✅ All requirements met, proceeding with populate')
 
     setCurrentStep('populating')
 
     try {
-      console.log('🏗️ Populating Kandel contract with offers...')
-      console.log('- Contract address:', addressToUse)
-      console.log('- Provision value:', finalValidationResult.minProvision.toString(), 'wei')
-      console.log('- Populate args:', {
-        from: BigInt(0),
-        to: BigInt(finalValidationResult.params.pricePoints),
-        baseQuoteTickIndex0: finalValidationResult.params.baseQuoteTickIndex0,
-        baseQuoteTickOffset: finalValidationResult.params.baseQuoteTickOffset,
-        firstAskIndex: finalValidationResult.params.firstAskIndex,
-        bidGives: finalValidationResult.params.bidGives,
-        askGives: finalValidationResult.params.askGives,
-        localConfig: {
-          gasprice: BigInt(128_000),
-          gasreq: BigInt(finalValidationResult.rawParams.gasreq),
-          stepSize: BigInt(finalValidationResult.rawParams.stepSize),
-        },
-        baseAmount: finalValidationResult.rawParams.baseAmount,
-        quoteAmount: finalValidationResult.rawParams.quoteAmount,
-        value: finalValidationResult.minProvision
+      await writeContract({
+        address: addressToUse,
+        abi: kandelLibABI,
+        functionName: 'populateFromOffset',
+        args: [
+          0n, // from
+          finalValidationResult.params.pricePoints, // to
+          finalValidationResult.params.baseQuoteTickIndex0,
+          finalValidationResult.params.baseQuoteTickOffset,
+          finalValidationResult.params.firstAskIndex,
+          finalValidationResult.params.bidGives,
+          finalValidationResult.params.askGives,
+          {
+            gasprice: Number(globalConfig.gasprice),
+            gasreq: Number(finalValidationResult.params.gasreq),
+            stepSize: Number(finalValidationResult.params.stepSize),
+            pricePoints: Number(finalValidationResult.params.pricePoints),
+          },
+          finalValidationResult.rawParams.baseAmount,
+          finalValidationResult.rawParams.quoteAmount,
+        ],
+        value: finalValidationResult.minProvision,
       })
-      
-      console.log('📞 About to call writeContract for populate...')
-      
-      try {
-        const tx = await writeContract({
-          address: addressToUse,
-          abi: kandelLibABI,
-          functionName: 'populateFromOffset',
-          args: [
-            BigInt(0), // from
-            BigInt(finalValidationResult.params.pricePoints), // to
-            finalValidationResult.params.baseQuoteTickIndex0,
-            finalValidationResult.params.baseQuoteTickOffset,
-            finalValidationResult.params.firstAskIndex,
-            finalValidationResult.params.bidGives,
-            finalValidationResult.params.askGives,
-            {
-              gasprice: BigInt(128_000), // Use consistent gas value
-              gasreq: BigInt(finalValidationResult.rawParams.gasreq),
-              stepSize: BigInt(finalValidationResult.rawParams.stepSize),
-            },
-            finalValidationResult.rawParams.baseAmount,
-            finalValidationResult.rawParams.quoteAmount,
-          ],
-          value: finalValidationResult.minProvision,
-        })
-        
-        console.log('✅ Populate transaction submitted:', tx)
-        console.log('✅ Transaction type:', typeof tx, 'Value:', tx)
-        console.log('⏳ Waiting for transaction receipt...')
-        
-        if (!tx) {
-          console.error('❌ writeContract returned undefined/null!')
-          console.error('❌ This means transaction was not submitted')
-          setValidationError('Transaction submission failed')
-          setCurrentStep('form')
-          return
-        }
-        
-        console.log('✅ Transaction hash is valid, proceeding...')
-        
-      } catch (writeError) {
-        console.error('❌ writeContract threw an error:')
-        console.error('❌ Error type:', typeof writeError)
-        console.error('❌ Error message:', writeError)
-        console.error('❌ Error details:', writeError)
-        setValidationError('Transaction submission failed: ' + (writeError as Error).message)
-        setCurrentStep('form')
-        return
-      }
     } catch (error) {
-      console.error('❌ Populate Kandel error:', error)
-      console.error('❌ Error details:', error)
+      setValidationError('Transaction submission failed: ' + (error as Error).message)
       setCurrentStep('form')
     }
   }
 
-  // Step 5: Verify Kandel Position (for debugging)
-  const verifyKandelPosition = async (kandelAddress: `0x${string}`) => {
-    if (!kandelAddress || !selectedMarket) {
-      console.log('❌ Verification cancelled - missing requirements')
-      return
+  // Helper function to create validation setup (removes redundancy between phase 1 and 2)
+  const createValidationSetup = () => {
+    if (!selectedMarket || !baseTokenInfo.decimals || !quoteTokenInfo.decimals || 
+        !baseTokenInfo.symbol || !quoteTokenInfo.symbol || !marketConfigData) {
+      return null
     }
 
-    try {
-      console.log('📊 Verifying Kandel position at:', kandelAddress)
-      
-      // Check reserve balance for asks (base token)
-      console.log('🔍 Checking asks reserve balance...')
-      const asksReserve = await readContract(config, {
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'reserveBalance',
-        args: [0], // 0 for asks (selling base token)
-      })
-      console.log('📈 Asks Reserve Balance:', asksReserve.toString(), 'wei')
-      console.log('📈 Asks Reserve Balance (formatted):', formatUnits(asksReserve, baseTokenInfo.decimals), baseTokenInfo.symbol)
-      
-      // Check reserve balance for bids (quote token)  
-      console.log('🔍 Checking bids reserve balance...')
-      const bidsReserve = await readContract(config, {
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'reserveBalance',
-        args: [1], // 1 for bids (selling quote token)
-      })
-      console.log('📉 Bids Reserve Balance:', bidsReserve.toString(), 'wei')
-      console.log('📉 Bids Reserve Balance (formatted):', formatUnits(bidsReserve, quoteTokenInfo.decimals), quoteTokenInfo.symbol)
-      
-      // Check Kandel params
-      console.log('🔍 Checking Kandel params...')
-      const params = await readContract(config, {
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'params',
-        args: [],
-      })
-      console.log('⚙️ Kandel Params:', params)
-      
-      console.log('✅ Kandel position verification completed!')
-      
-    } catch (error) {
-      console.error('❌ Verification error:', error)
+    const baseToken: Token = {
+      address: selectedMarket.tkn0,
+      symbol: baseTokenInfo.symbol,
+      decimals: baseTokenInfo.decimals,
+      displayDecimals: Math.min(baseTokenInfo.decimals, 4),
+      priceDisplayDecimals: 4,
+      mgvTestToken: true
+    } as Token
+
+    const quoteToken: Token = {
+      address: selectedMarket.tkn1,
+      symbol: quoteTokenInfo.symbol,
+      decimals: quoteTokenInfo.decimals,
+      displayDecimals: Math.min(quoteTokenInfo.decimals, 4),
+      priceDisplayDecimals: 2,
+      mgvTestToken: true
+    } as Token
+
+    const market: MarketParams = {
+      base: baseToken,
+      quote: quoteToken,
+      tickSpacing: selectedMarket.tickSpacing
+    }
+    
+    const asksLocalConfigData: LocalConfig = {
+      ...marketConfigData.config01,
+      density: Number(marketConfigData.config01.density),
+      rawDensity: marketConfigData.config01.density,
+      offer_gasbase: marketConfigData.config01.kilo_offer_gasbase / BigInt(1000)
+    } as any
+
+    const bidsLocalConfigData: LocalConfig = {
+      ...marketConfigData.config10,
+      density: Number(marketConfigData.config10.density),
+      rawDensity: marketConfigData.config10.density,
+      offer_gasbase: marketConfigData.config10.kilo_offer_gasbase / BigInt(1000)
+    } as any
+
+    const _globalConfig = {
+      gasprice: 600n,
+    }
+
+    return {
+      market,
+      asksLocalConfigData,
+      bidsLocalConfigData,
+      _globalConfig
     }
   }
 
+// Step 5: Verify Kandel Position (for debugging)
+  // const verifyKandelPosition = async (kandelAddress: `0x${string}`) => {
+  //   if (!kandelAddress || !selectedMarket) {
+  //     console.log('❌ Verification cancelled - missing requirements')
+  //     return
+  //   }
+  //   try {
+  //     console.log('📊 Verifying Kandel position at:', kandelAddress)
+      
+  //     // Check reserve balance for asks (base token)
+  //     console.log('🔍 Checking asks reserve balance...')
+  //     const asksReserve = await readContract(config, {
+  //       address: kandelAddress,
+  //       abi: kandelLibABI,
+  //       functionName: 'reserveBalance',
+  //       args: [0], // 0 for asks (selling base token)
+  //     })
+  //     console.log('📈 Asks Reserve Balance:', asksReserve.toString(), 'wei')
+  //     console.log('📈 Asks Reserve Balance (formatted):', formatUnits(asksReserve, baseTokenInfo.decimals), baseTokenInfo.symbol)
+      
+  //     // Check reserve balance for bids (quote token)  
+  //     console.log('🔍 Checking bids reserve balance...')
+  //     const bidsReserve = await readContract(config, {
+  //       address: kandelAddress,
+  //       abi: kandelLibABI,
+  //       functionName: 'reserveBalance',
+  //       args: [1], // 1 for bids (selling quote token)
+  //     })
+  //     console.log('📉 Bids Reserve Balance:', bidsReserve.toString(), 'wei')
+  //     console.log('📉 Bids Reserve Balance (formatted):', formatUnits(bidsReserve, quoteTokenInfo.decimals), quoteTokenInfo.symbol)
+      
+  //     // Check Kandel params
+  //     console.log('🔍 Checking Kandel params...')
+  //     const params = await readContract(config, {
+  //       address: kandelAddress,
+  //       abi: kandelLibABI,
+  //       functionName: 'params',
+  //       args: [],
+  //     })
+  //     console.log('⚙️ Kandel Params:', params)
+      
+  //     console.log('✅ Kandel position verification completed!')
+      
+  //   } catch (error) {
+  //     console.error('❌ Verification error:', error)
+  //   }
+  // }
+
   // Handle transaction completion
   useEffect(() => {
-    console.log('🔍 Transaction receipt updated:', {
-      txReceipt: !!txReceipt,
-      status: txReceipt?.status,
-      currentStep: currentStep,
-      txHash: txHash
-    })
+    // console.log('🔍 Transaction receipt updated:', {
+    //   txReceipt: !!txReceipt,
+    //   status: txReceipt?.status,
+    //   currentStep: currentStep,
+    //   txHash: txHash
+    // })
     
     if (txReceipt) {
       if (txReceipt.status === 'reverted') {
-        console.log('❌ Transaction reverted!')
         setValidationError('Transaction failed. Please try again.')
         setCurrentStep('form')
         return
       }
       
       if (txReceipt.status === 'success') {
-        console.log('✅ Transaction successful for step:', currentStep)
-      switch (currentStep) {
-        case 'deploying':
-          // Extract Kandel address from NewKandel event
-          try {
-            // Parse NewKandel event from transaction logs
-            const newKandelEvent = txReceipt.logs.find(
-              (log) => {
-                try {
-                  const decoded = decodeEventLog({
-                    abi: kandelSeederABI,
-                    data: log.data,
-                    topics: log.topics,
-                  })
-                  return decoded.eventName === 'NewKandel'
-                } catch {
-                  return false
+        // console.log('✅ Transaction successful for step:', currentStep)
+        switch (currentStep) {
+          case 'deploying':
+            // Extract Kandel address from NewKandel event
+            try {
+              const newKandelEvent = txReceipt.logs.find(
+                (log) => {
+                  try {
+                    const decoded = decodeEventLog({
+                      abi: kandelSeederABI,
+                      data: log.data,
+                      topics: log.topics,
+                    })
+                    return decoded.eventName === 'NewKandel'
+                  } catch {
+                    return false
+                  }
                 }
-              }
-            )
-            
-            if (newKandelEvent) {
-              const decoded = decodeEventLog({
-                abi: kandelSeederABI,
-                data: newKandelEvent.data,
-                topics: newKandelEvent.topics,
-              })
-              const kandelAddress = (decoded.args as any).kandel as `0x${string}`
-              console.log('🎉 Kandel contract deployed at address:', kandelAddress)
-              setDeployedKandelAddress(kandelAddress)
+              )
               
-              // Pass the Kandel address directly to avoid state timing issues
-              setTimeout(() => approveBaseToken(kandelAddress), 1000)
-            } else {
-              throw new Error('NewKandel event not found in transaction logs')
+              if (newKandelEvent) {
+                const decoded = decodeEventLog({
+                  abi: kandelSeederABI,
+                  data: newKandelEvent.data,
+                  topics: newKandelEvent.topics,
+                })
+                const kandelAddress = (decoded.args as any).kandel as `0x${string}`
+                // console.log('🎉 Kandel contract deployed at address:', kandelAddress)
+                setDeployedKandelAddress(kandelAddress)
+                
+                setTimeout(() => approveBaseToken(kandelAddress), 1000)
+              } else {
+                throw new Error('NewKandel event not found in transaction logs')
+              }
+            } catch (error) {
+              setValidationError('Failed to extract Kandel address from transaction')
+              setCurrentStep('form')
+              return
             }
-          } catch (error) {
-            console.error('Failed to extract Kandel address:', error)
-            setValidationError('Failed to extract Kandel address from transaction')
-            setCurrentStep('form')
-            return
-          }
-          break
-        case 'approving-base':
-          console.log('🔄 Base token approved, proceeding to quote token approval')
-          setTimeout(() => approveQuoteToken(deployedKandelAddress!), 1000)
-          break
-        case 'approving-quote':
-          console.log('🔄 Quote token approved, proceeding to populate Kandel')
-          console.log('🕐 Setting 1-second timeout for populateKandel')
-          console.log('🕐 Will call populateKandel with address:', deployedKandelAddress)
-          setTimeout(() => {
-            console.log('⏰ Timeout triggered, about to call populateKandel')
-            populateKandel(deployedKandelAddress!)
-          }, 1000)
-          break
+            break
+          case 'approving-base':
+            // console.log('🔄 Base token approved, proceeding to quote token approval')
+            setTimeout(() => approveQuoteToken(deployedKandelAddress!), 1000)
+            break
+          case 'approving-quote':
+            // console.log('🔄 Quote token approved, proceeding to populate Kandel')
+            setTimeout(() => {
+              populateKandel(deployedKandelAddress!)
+            }, 1000)
+            break
         case 'populating':
-          console.log('🎉 Kandel position populated successfully!')
-          console.log('🔍 About to verify Kandel position...')
-          console.log('🔍 deployedKandelAddress for verification:', deployedKandelAddress)
-          setTimeout(() => {
-            console.log('🔍 Starting verification now...')
-            verifyKandelPosition(deployedKandelAddress!)
-          }, 1000)
           setCurrentStep('completed')
+          // Notify parent that position was created
+          if (onPositionCreated) {
+            onPositionCreated()
+          }
           break
       }
     }
   }}, [txReceipt, currentStep])
 
   // Debug transaction hash changes
-  useEffect(() => {
-    console.log('📝 Transaction hash changed:', {
-      txHash: txHash,
-      hasHash: !!txHash,
-      currentStep: currentStep,
-      isWritePending: isWritePending
-    })
-  }, [txHash, currentStep, isWritePending])
+  // useEffect(() => {
+  //   console.log('📝 Transaction hash changed:', {
+  //     txHash: txHash,
+  //     hasHash: !!txHash,
+  //     currentStep: currentStep,
+  //     isWritePending: isWritePending
+  //   })
+  // }, [txHash, currentStep, isWritePending])
 
   // Debug deployedKandelAddress changes
-  useEffect(() => {
-    console.log('🏠 deployedKandelAddress updated:', deployedKandelAddress)
-  }, [deployedKandelAddress])
+  // useEffect(() => {
+  //   console.log('🏠 deployedKandelAddress updated:', deployedKandelAddress)
+  // }, [deployedKandelAddress])
   
-  // Reset form and errors when starting over
-  const resetForm = () => {
-    setCurrentStep('form')
-    setDeployedKandelAddress(null)
-    setValidationError('')
-    setMinPrice('')
-    setMaxPrice('')
-    setMidPrice('')
-    setPricePoints(10)
-    setStepSize(2)
-    setBaseAmount('')
-    setQuoteAmount('')
-    setPhase1ValidationResult(null)
-    setFinalValidationResult(null)
-  }
 
   if (!mounted) {
     return (
@@ -855,7 +735,7 @@ export function KandelPositionForm() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    {formatTokenName(selectedMarket.tkn0)} Amount
+                    {formatTokenName(selectedMarket.tkn0, baseTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
@@ -878,7 +758,7 @@ export function KandelPositionForm() {
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    {formatTokenName(selectedMarket.tkn1)} Amount
+                    {formatTokenName(selectedMarket.tkn1, quoteTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
@@ -947,11 +827,11 @@ export function KandelPositionForm() {
             </div>
             <div className={`flex items-center space-x-2 ${currentStep === 'approving-base' ? 'text-blue-600' : currentStep === 'completed' ? 'text-green-600' : 'text-gray-400'}`}>
               <div className="w-2 h-2 rounded-full bg-current"></div>
-              <span>Approve {formatTokenName(selectedMarket?.tkn0 || '0x0')}</span>
+              <span>Approve {formatTokenName(selectedMarket?.tkn0 || '0x0', baseTokenInfo.symbol)}</span>
             </div>
             <div className={`flex items-center space-x-2 ${currentStep === 'approving-quote' ? 'text-blue-600' : currentStep === 'completed' ? 'text-green-600' : 'text-gray-400'}`}>
               <div className="w-2 h-2 rounded-full bg-current"></div>
-              <span>Approve {formatTokenName(selectedMarket?.tkn1 || '0x0')}</span>
+              <span>Approve {formatTokenName(selectedMarket?.tkn1 || '0x0', quoteTokenInfo.symbol)}</span>
             </div>
             <div className={`flex items-center space-x-2 ${currentStep === 'populating' ? 'text-blue-600' : currentStep === 'completed' ? 'text-green-600' : 'text-gray-400'}`}>
               <div className="w-2 h-2 rounded-full bg-current"></div>
@@ -969,6 +849,8 @@ export function KandelPositionForm() {
           )}
         </div>
       )}
+
+
     </div>
   )
 }

@@ -183,8 +183,8 @@ async function main() {
   const seeder = await deployKandelSeeder(mangrove);
   const token0 = await deployToken("Wrapped Ether", "WETH", 18);
   const token1 = await deployToken("USDC", "USDC", 6);
-  const token2 = await deployToken("BlahBLah", "BKC", 18);
-  const token3 = await deployToken("choot", "chu", 18);
+  // const token2 = await deployToken("Test1", "T1", 18);
+  // const token3 = await deployToken("Test2", "T2", 18);
   await openMarket(
     mangrove,
     reader,
@@ -193,18 +193,18 @@ async function main() {
     parseUnits("0.001", 18),
     parseUnits("1", 6)
   );
-  await openMarket(
-    mangrove,
-    reader,
-    token2,
-    token3,
-    parseUnits("1", 18),
-    parseUnits("1", 18)
-  );
+  // await openMarket(
+  //   mangrove,
+  //   reader,
+  //   token2,
+  //   token3,
+  //   parseUnits("1", 18),
+  //   parseUnits("1", 18)
+  // );
     await mintToken(token0, parseUnits("100", 18));
     await mintToken(token1, parseUnits("1000", 6));
-    await mintToken(token2, parseUnits("1000", 18));
-    await mintToken(token3, parseUnits("1100", 18));
+    // await mintToken(token2, parseUnits("1000", 18));
+    // await mintToken(token3, parseUnits("1100", 18));
 }
 
 main().then(() => {

@@ -125,7 +125,16 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   const tkn1Decimals = token1Info.decimals
                   
                   // For asks: wants tkn1, gives tkn0
-                  const tickBigInt = BigInt(Math.floor(Math.pow(2, Number(offer.tick))))
+                  const tickNumber = Number(offer.tick)
+                  const tickPow = Math.pow(2, tickNumber)
+                  
+                  // Safety check to prevent Infinity conversion to BigInt
+                  if (!Number.isFinite(tickPow) || tickPow > Number.MAX_SAFE_INTEGER) {
+                    console.warn('Invalid tick value for offer:', offer.tick, 'resulting in:', tickPow)
+                    return null // Skip this offer
+                  }
+                  
+                  const tickBigInt = BigInt(Math.floor(tickPow))
                   const decimalsAdjustment = Number(tkn1Decimals - tkn0Decimals + 96)
                   const price = (Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn0Decimals)
@@ -176,7 +185,16 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   const tkn1Decimals = token1Info.decimals
                   
                   // For bids: wants tkn0, gives tkn1
-                  const tickBigInt = BigInt(Math.floor(Math.pow(2, Number(offer.tick))))
+                  const tickNumber = Number(offer.tick)
+                  const tickPow = Math.pow(2, tickNumber)
+                  
+                  // Safety check to prevent Infinity conversion to BigInt
+                  if (!Number.isFinite(tickPow) || tickPow > Number.MAX_SAFE_INTEGER) {
+                    console.warn('Invalid tick value for offer:', offer.tick, 'resulting in:', tickPow)
+                    return null // Skip this offer
+                  }
+                  
+                  const tickBigInt = BigInt(Math.floor(tickPow))
                   const decimalsAdjustment = Number(tkn0Decimals - tkn1Decimals + 96)
                   const price = (1 / Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn1Decimals)

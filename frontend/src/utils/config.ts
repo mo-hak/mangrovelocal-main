@@ -20,6 +20,8 @@ export const CONTRACTS = {
   KANDEL_SEEDER: '0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9' as `0x${string}`,
   WETH: '0xdc64a140aa3e981100a9beca4e685f962f0cf6c9' as `0x${string}`,
   USDC: '0x5fc8d32690cc91d4c39d9d3abcbd16989f875707' as `0x${string}`,
+  // T1: '0x0165878a594ca255338adfa4d48449f69242eb8f' as `0x${string}`,
+  // T2: '0xa513e6e4b8f2a923d98304ec87f64353c4d5c853' as `0x${string}`,
 }
 
 export const TOKENS = {
@@ -35,4 +37,16 @@ export const TOKENS = {
     name: 'USD Coin',
     decimals: 6,
   },
+  // T1: {
+  //   address: CONTRACTS.T1,
+  //   symbol: 'T1',
+  //   name: 'Test1',
+  //   decimals: 18,
+  // },
+  // T2: {
+  //   address: CONTRACTS.T2,
+  //   symbol: 'T2',
+  //   name: 'Test2',
+  //   decimals: 18,
+  // }
 }
