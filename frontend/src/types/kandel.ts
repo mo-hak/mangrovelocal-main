@@ -52,3 +52,30 @@ export type params_ggsp = {
   stepSize: number;
   pricePoints: number; // This comes from a uint32, so it's a number
 };
+
+// Market interface for Kandel operations
+export interface Market {
+  tkn0: `0x${string}`
+  tkn1: `0x${string}`
+  tickSpacing: bigint
+}
+
+// ValidateParamsResult interface for Kandel validation
+export interface ValidateParamsResult {
+  isValid: boolean
+  params: any
+  rawParams: any
+  minBaseAmount: bigint
+  minQuoteAmount: bigint
+  minProvision: bigint
+}
+
+// UserKandelPosition interface for user position tracking
+export interface UserKandelPosition {
+  address: `0x${string}`
+  baseToken: `0x${string}`
+  quoteToken: `0x${string}`
+  market: string
+  blockNumber: bigint
+  transactionHash: `0x${string}`
+}

@@ -5,15 +5,7 @@ import { useState, useEffect } from 'react'
 import { CONTRACTS } from '@/utils/config'
 import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
 import { decodeEventLog } from 'viem'
-
-export interface UserKandelPosition {
-  address: `0x${string}`
-  baseToken: `0x${string}`
-  quoteToken: `0x${string}`
-  market: string
-  blockNumber: bigint
-  transactionHash: `0x${string}`
-}
+import { UserKandelPosition } from '@/types/kandel'
 
 export function useUserPositions() {
   const { address } = useAccount()

@@ -14,12 +14,12 @@ import { parseUnits, formatUnits, decodeEventLog } from 'viem'
 import { 
   validateKandelParams,
   type RawKandelParams,
-  type ValidateParamsResult,
   type RawKandelPositionParams,
   type MarketParams,
   type Token,
   type LocalConfig
 } from '@mangrovedao/mgv'
+import { ValidateParamsResult } from '@/types/kandel'
 
 import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
 import { kandelLibABI } from '@/utils/abi/kandelLib'

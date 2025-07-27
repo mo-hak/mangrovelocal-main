@@ -4,27 +4,10 @@ import { useReadContracts, useAccount, useWriteContract } from 'wagmi'
 import { kandelLibABI } from '@/utils/abi/kandelLib'
 import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
 import { parseUnits } from 'viem'
-import { params_ggsp } from '@/types/kandel'
+import { params_ggsp, Market, ValidateParamsResult } from '@/types/kandel'
 import { useMemo } from 'react'
 import { CONTRACTS } from '@/utils/config'
 import { useApproveToken } from './useERC20'
-
-// Market interface
-interface Market {
-  tkn0: `0x${string}`
-  tkn1: `0x${string}`
-  tickSpacing: bigint
-}
-
-// ValidateParamsResult interface
-interface ValidateParamsResult {
-  isValid: boolean
-  params: any
-  rawParams: any
-  minBaseAmount: bigint
-  minQuoteAmount: bigint
-  minProvision: bigint
-}
 
 // Modify parameters (section B in plan)
 export const setStepSize = async (

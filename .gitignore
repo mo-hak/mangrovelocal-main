@@ -27,8 +27,12 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# Next.js build output
+.next
+
 # IntelliJ based IDEs
 .idea
+.claude
 
 # Finder (MacOS) folder config
 .DS_Store

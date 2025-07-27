@@ -6,12 +6,7 @@ import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { TokenPairDisplay, TokenDisplay } from './TokenDisplay'
 import { CONTRACTS } from '@/utils/config'
 import { formatUnits } from 'viem'
-
-interface Market {
-  tkn0: `0x${string}`
-  tkn1: `0x${string}`
-  tickSpacing: bigint
-}
+import { Market } from '@/types/kandel'
 
 interface OrderBookProps {
   userKandelAddresses?: `0x${string}`[]
