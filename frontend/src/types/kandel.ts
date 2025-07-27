@@ -45,3 +45,10 @@ export interface KandelPosition {
   baseOffered: bigint
   quoteOffered: bigint
 }
+
+export type params_ggsp = {
+  gasprice: number;
+  gasreq: number;
+  stepSize: number;
+  pricePoints: number; // This comes from a uint32, so it's a number
+};

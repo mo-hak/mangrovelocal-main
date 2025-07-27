@@ -41,7 +41,7 @@ export function useUserPositions() {
         // Get the current block number
         const currentBlock = await publicClient.getBlockNumber()
         
-        // Look back a reasonable number of blocks (e.g., 10000 blocks ~2 days on mainnet, much less on local)
+        // Look back 10000 blocks
         const fromBlock = currentBlock > 10000n ? currentBlock - 10000n : 0n
 
         // Fetch NewKandel events from KandelSeeder
@@ -78,7 +78,7 @@ export function useUserPositions() {
               const args = decoded.args as any
               const kandelAddress = args.kandel as `0x${string}`
               
-              // Fetch the actual BASE and QUOTE token addresses from the Kandel contract
+              // Fetch BASE and QUOTE token addresses from the Kandel contract
               try {
                 const [baseToken, quoteToken] = await Promise.all([
                   publicClient.readContract({
@@ -118,13 +118,13 @@ export function useUserPositions() {
                   transactionHash: log.transactionHash,
                 })
               } catch (contractError) {
-                console.error('Error fetching token addresses from Kandel contract:', contractError)
                 // Skip this position if we can't get the token addresses
                 continue
               }
             }
           } catch (decodeError) {
-            console.error('Error decoding NewKandel event:', decodeError)
+            // Skip this log if we can't decode it
+            continue
           }
         }
 
@@ -133,7 +133,6 @@ export function useUserPositions() {
         
         setPositions(userPositions)
       } catch (err) {
-        console.error('Error fetching user positions:', err)
         setError('Failed to fetch positions')
       } finally {
         setIsLoading(false)
@@ -147,8 +146,6 @@ export function useUserPositions() {
     positions,
     isLoading,
     error,
-    refetch: () => {
-      setRefetchTrigger(prev => prev + 1)
-    },
+    refetch: () => setRefetchTrigger(prev => prev + 1),
   }
 }

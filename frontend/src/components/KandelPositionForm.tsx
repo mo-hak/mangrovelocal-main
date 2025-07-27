@@ -5,6 +5,8 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useConfig }
 import { readContract } from 'wagmi/actions'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { useOpenMarkets, useGlobalConfig, useMarketConfig } from '@/hooks/useMangrove'
+import { deployKandel, populateKandel } from '@/hooks/useKandelManager'
+import { useApproveToken } from '@/hooks/useERC20'
 import { CONTRACTS } from '@/utils/config'
 import { parseUnits, formatUnits, decodeEventLog } from 'viem'
 
@@ -271,57 +273,39 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
   }, [phase1ValidationResult, baseAmount, quoteAmount, selectedMarket, minPrice, maxPrice, midPrice, pricePoints, stepSize, baseTokenInfo.decimals, quoteTokenInfo.decimals, baseTokenInfo.symbol, quoteTokenInfo.symbol, globalConfig, marketConfigData])
 
   // Step 1: Deploy Kandel Contract
-  const deployKandel = async () => {
+  const handleDeployKandel = async () => {
     if (!selectedMarket || !finalValidationResult) return
 
     setCurrentStep('deploying')
 
     try {
-      await writeContract({
-        address: CONTRACTS.KANDEL_SEEDER,
-        abi: kandelSeederABI,
-        functionName: 'sow',
-        args: [
-          {
-            outbound_tkn: selectedMarket.tkn0,
-            inbound_tkn: selectedMarket.tkn1,
-            tickSpacing: selectedMarket.tickSpacing,
-          },
-          false, // liquiditySharing
-        ],
-      })
+      await deployKandel(selectedMarket, writeContract)
     } catch (error) {
       console.error('Deploy Kandel error:', error)
       setCurrentStep('form')
     }
   }
 
-
   // Step 2: Approve Base Token
-  const approveBaseToken = async (kandelAddress?: `0x${string}`) => {
+  const handleApproveBaseToken = async (kandelAddress?: `0x${string}`) => {
     const addressToUse = kandelAddress || deployedKandelAddress
     
-    if (!addressToUse || !finalValidationResult || !quoteAmount) {
+    if (!addressToUse || !finalValidationResult || !baseAmount) {
       return
     }
     setCurrentStep('approving-base')
 
     try {
       const amount = parseUnits(baseAmount, baseTokenInfo.decimals)
-      
-      const tx = await writeContract({
-        address: selectedMarket.tkn0,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [addressToUse, amount],
-      })
+      await useApproveToken(selectedMarket.tkn0, addressToUse, amount, writeContract)
     } catch (error) {
+      console.error('Base token approval error:', error)
       setCurrentStep('form')
     }
   }
 
   // Step 3: Approve Quote Token
-  const approveQuoteToken = async (kandelAddress?: `0x${string}`) => {
+  const handleApproveQuoteToken = async (kandelAddress?: `0x${string}`) => {
     const addressToUse = kandelAddress || deployedKandelAddress
     
     if (!addressToUse || !finalValidationResult || !quoteAmount) {
@@ -332,20 +316,15 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
     try {
       const amount = parseUnits(quoteAmount, quoteTokenInfo.decimals)
-      
-      await writeContract({
-        address: selectedMarket.tkn1,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [addressToUse, amount],
-      })
+      await useApproveToken(selectedMarket.tkn1, addressToUse, amount, writeContract)
     } catch (error) {
+      console.error('Quote token approval error:', error)
       setCurrentStep('form')
     }
   }
 
   // Step 4: Populate Kandel with offers
-  const populateKandel = async (kandelAddress?: `0x${string}`) => {
+  const handlePopulateKandel = async (kandelAddress?: `0x${string}`) => {
     const addressToUse = kandelAddress || deployedKandelAddress
     
     // Guard clauses for required parameters
@@ -356,29 +335,12 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     setCurrentStep('populating')
 
     try {
-      await writeContract({
-        address: addressToUse,
-        abi: kandelLibABI,
-        functionName: 'populateFromOffset',
-        args: [
-          0n, // from
-          finalValidationResult.params.pricePoints, // to
-          finalValidationResult.params.baseQuoteTickIndex0,
-          finalValidationResult.params.baseQuoteTickOffset,
-          finalValidationResult.params.firstAskIndex,
-          finalValidationResult.params.bidGives,
-          finalValidationResult.params.askGives,
-          {
-            gasprice: Number(globalConfig.gasprice),
-            gasreq: Number(finalValidationResult.params.gasreq),
-            stepSize: Number(finalValidationResult.params.stepSize),
-            pricePoints: Number(finalValidationResult.params.pricePoints),
-          },
-          finalValidationResult.rawParams.baseAmount,
-          finalValidationResult.rawParams.quoteAmount,
-        ],
-        value: finalValidationResult.minProvision,
-      })
+      await populateKandel(
+        addressToUse,
+        finalValidationResult,
+        globalConfig,
+        writeContract
+      )
     } catch (error) {
       setValidationError('Transaction submission failed: ' + (error as Error).message)
       setCurrentStep('form')
@@ -537,7 +499,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                 // console.log('🎉 Kandel contract deployed at address:', kandelAddress)
                 setDeployedKandelAddress(kandelAddress)
                 
-                setTimeout(() => approveBaseToken(kandelAddress), 1000)
+                setTimeout(() => handleApproveBaseToken(kandelAddress), 1000)
               } else {
                 throw new Error('NewKandel event not found in transaction logs')
               }
@@ -548,41 +510,24 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
             }
             break
           case 'approving-base':
-            // console.log('🔄 Base token approved, proceeding to quote token approval')
-            setTimeout(() => approveQuoteToken(deployedKandelAddress!), 1000)
+            setTimeout(() => handleApproveQuoteToken(deployedKandelAddress!), 1000)
             break
           case 'approving-quote':
-            // console.log('🔄 Quote token approved, proceeding to populate Kandel')
             setTimeout(() => {
-              populateKandel(deployedKandelAddress!)
+              handlePopulateKandel(deployedKandelAddress!)
             }, 1000)
             break
-        case 'populating':
-          setCurrentStep('completed')
-          // Notify parent that position was created
-          if (onPositionCreated) {
-            onPositionCreated()
-          }
-          break
+          case 'populating':
+            setCurrentStep('completed')
+            // Notify parent that position was created
+            if (onPositionCreated) {
+              onPositionCreated()
+            }
+            break
+        }
       }
     }
-  }}, [txReceipt, currentStep])
-
-  // Debug transaction hash changes
-  // useEffect(() => {
-  //   console.log('📝 Transaction hash changed:', {
-  //     txHash: txHash,
-  //     hasHash: !!txHash,
-  //     currentStep: currentStep,
-  //     isWritePending: isWritePending
-  //   })
-  // }, [txHash, currentStep, isWritePending])
-
-  // Debug deployedKandelAddress changes
-  // useEffect(() => {
-  //   console.log('🏠 deployedKandelAddress updated:', deployedKandelAddress)
-  // }, [deployedKandelAddress])
-  
+  }, [txReceipt, currentStep])
 
   if (!mounted) {
     return (
@@ -807,7 +752,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
           {/* Create Position Button */}
           <button
-            onClick={deployKandel}
+            onClick={handleDeployKandel}
             disabled={!finalValidationResult?.isValid || isValidating || isWritePending}
             className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >

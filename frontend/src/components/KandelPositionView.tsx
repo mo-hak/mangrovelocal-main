@@ -1,12 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { formatUnits, parseUnits } from 'viem'
-import { useKandelPositionWithTokens } from '@/hooks/useKandel'
+import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { formatUnits } from 'viem'
+import { useKandelManager, setStepSize, setGasreq, setGasprice, depositFunds, withdrawFunds, retractAndWithdraw } from '@/hooks/useKandelManager'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
-import { kandelLibABI } from '@/utils/abi/kandelLib'
-import { erc20Abi } from '@/utils/abi/erc20'
 
 interface KandelPositionViewProps {
   kandelAddress: `0x${string}`
@@ -22,9 +20,27 @@ export function KandelPositionView({
   onClose 
 }: KandelPositionViewProps) {
   const { address } = useAccount()
-  const { position, isLoading, error } = useKandelPositionWithTokens(kandelAddress, baseToken, quoteToken)
+  const baseTokenInfo = useTokenInfo(baseToken)
+  const quoteTokenInfo = useTokenInfo(quoteToken)
+  
+  // Use writeContract hook for transactions
   const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
-  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
+  
+  // Use the useKandelManager hook for data fetching and contract interaction
+  const {
+    params,
+    baseReserveBalance,
+    quoteReserveBalance,
+    baseOfferedVolume,
+    quoteOfferedVolume,
+    isLoading,
+    error,
+    refetch,
+    userAddress,
+  } = useKandelManager(kandelAddress)
+
+  // Transaction state
+  const [currentAction, setCurrentAction] = useState<'none' | 'updating-step' | 'updating-gasreq' | 'updating-gasprice' | 'depositing' | 'withdrawing' | 'full-withdraw'>('none')
 
   // Edit mode states
   const [isEditMode, setIsEditMode] = useState(false)
@@ -33,15 +49,10 @@ export function KandelPositionView({
   const [editGasprice, setEditGasprice] = useState<string>('')
 
   // Deposit/Withdraw states
-  const [showDepositModal, setShowDepositModal] = useState(false)
-  const [showWithdrawModal, setShowWithdrawModal] = useState(false)
   const [depositBaseAmount, setDepositBaseAmount] = useState<string>('')
   const [depositQuoteAmount, setDepositQuoteAmount] = useState<string>('')
   const [withdrawBaseAmount, setWithdrawBaseAmount] = useState<string>('')
   const [withdrawQuoteAmount, setWithdrawQuoteAmount] = useState<string>('')
-
-  // Transaction state
-  const [currentAction, setCurrentAction] = useState<'none' | 'updating' | 'depositing' | 'withdrawing' | 'full-withdraw'>('none')
 
   // Format token names for display
   const formatTokenName = (address: `0x${string}`, symbol?: string) => {
@@ -50,273 +61,153 @@ export function KandelPositionView({
 
   // Initialize edit values when entering edit mode
   useEffect(() => {
-    if (isEditMode && position && position.params) {
-      setEditStepSize(position.params.stepSize?.toString() || '')
-      setEditGasreq(position.params.gasreq?.toString() || '')
-      setEditGasprice(position.params.gasprice?.toString() || '')
+    if (isEditMode && params) {
+      setEditStepSize(params.stepSize?.toString() || '')
+      setEditGasreq(params.gasreq?.toString() || '')
+      setEditGasprice(params.gasprice?.toString() || '')
     }
-  }, [isEditMode, position])
+  }, [isEditMode, params])
 
-  // Update Kandel parameters
-  const updateParameters = async () => {
-    if (!position || !editStepSize || !editGasreq || !editGasprice) return
+  // Update step size using exported function
+  const updateStepSize = async () => {
+    if (!params || !editStepSize) return
 
-    setCurrentAction('updating')
-
-    try {
-      // Update step size if changed
-      const newStepSize = editStepSize ? Number(editStepSize) : 0
+    const newStepSize = Number(editStepSize)
       if (!Number.isFinite(newStepSize) || newStepSize <= 0) {
-        console.error('Invalid step size:', editStepSize)
-        setCurrentAction('none')
-        return
-      }
-      if (position.params?.stepSize && BigInt(newStepSize) !== position.params.stepSize) {
-        await writeContract({
-          address: kandelAddress,
-          abi: kandelLibABI,
-          functionName: 'setStepSize',
-          args: [BigInt(newStepSize)],
-        })
+      alert('Invalid step size')
         return
       }
 
-      // Update gasreq if changed
-      const newGasreq = editGasreq ? Number(editGasreq) : 0
-      if (!Number.isFinite(newGasreq) || newGasreq <= 0) {
-        console.error('Invalid gasreq:', editGasreq)
-        setCurrentAction('none')
-        return
-      }
-      if (position.params?.gasreq && BigInt(newGasreq) !== position.params.gasreq) {
-        await writeContract({
-          address: kandelAddress,
-          abi: kandelLibABI,
-          functionName: 'setGasreq',
-          args: [BigInt(newGasreq)],
-        })
-        return
-      }
-
-      // Update gasprice if changed
-      const newGasprice = editGasprice ? Number(editGasprice) : 0
-      if (!Number.isFinite(newGasprice) || newGasprice <= 0) {
-        console.error('Invalid gasprice:', editGasprice)
-        setCurrentAction('none')
-        return
-      }
-      if (position.params?.gasprice && BigInt(newGasprice) !== position.params.gasprice) {
-        await writeContract({
-          address: kandelAddress,
-          abi: kandelLibABI,
-          functionName: 'setGasprice',
-          args: [BigInt(newGasprice)],
-        })
-        return
-      }
-
-      setCurrentAction('none')
-      setIsEditMode(false)
-    } catch (error) {
-      console.error('Update parameters error:', error)
-      setCurrentAction('none')
-    }
-  }
-
-  // Deposit funds
-  const depositFunds = async () => {
-    if (!position || (!depositBaseAmount && !depositQuoteAmount)) return
-
-    setCurrentAction('depositing')
-
-    try {
-      let baseAmount = 0n
-      let quoteAmount = 0n
-      
       try {
-        baseAmount = depositBaseAmount && Number.isFinite(Number(depositBaseAmount)) 
-          ? parseUnits(depositBaseAmount, position.baseTokenInfo.decimals) 
-          : 0n
-        quoteAmount = depositQuoteAmount && Number.isFinite(Number(depositQuoteAmount))
-          ? parseUnits(depositQuoteAmount, position.quoteTokenInfo.decimals) 
-          : 0n
+        setCurrentAction('updating-step')
+        await setStepSize(kandelAddress, newStepSize, writeContract)
       } catch (error) {
-        console.error('Error parsing deposit amounts:', error)
+        console.error('Error updating step size:', error)
         setCurrentAction('none')
-        return
       }
-
-      // Approve tokens first if needed
-      if (baseAmount > 0n) {
-        await writeContract({
-          address: baseToken,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [kandelAddress, baseAmount],
-        })
-        // Wait for approval before depositing
-        return
-      }
-
-      if (quoteAmount > 0n) {
-        await writeContract({
-          address: quoteToken,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [kandelAddress, quoteAmount],
-        })
-        return
-      }
-
-      // If no approvals needed, deposit directly
-      await writeContract({
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'depositFunds',
-        args: [baseAmount, quoteAmount],
-      })
-    } catch (error) {
-      console.error('Deposit error:', error)
-      setCurrentAction('none')
-    }
   }
 
-  // Withdraw funds
-  const withdrawFunds = async () => {
-    if (!position || (!withdrawBaseAmount && !withdrawQuoteAmount) || !address) return
+  // Update gas requirement using exported function
+  const updateGasreq = async () => {
+    if (!params || !editGasreq) return
 
-    setCurrentAction('withdrawing')
-
-    try {
-      let baseAmount = 0n
-      let quoteAmount = 0n
-      
+    const newGasreq = Number(editGasreq)
+    if (!Number.isFinite(newGasreq) || newGasreq <= 0) {
+      alert('Invalid gas requirement')
+        return
+      }
       try {
-        baseAmount = withdrawBaseAmount && Number.isFinite(Number(withdrawBaseAmount))
-          ? parseUnits(withdrawBaseAmount, position.baseTokenInfo.decimals) 
-          : 0n
-        quoteAmount = withdrawQuoteAmount && Number.isFinite(Number(withdrawQuoteAmount))
-          ? parseUnits(withdrawQuoteAmount, position.quoteTokenInfo.decimals) 
-          : 0n
+        setCurrentAction('updating-gasreq')
+        await setGasreq(kandelAddress, newGasreq, writeContract)
       } catch (error) {
-        console.error('Error parsing withdraw amounts:', error)
+        console.error('Error updating gas requirement:', error)
         setCurrentAction('none')
-        return
+      }
+    }
+
+  // Update gas price using exported function
+  const updateGasprice = async () => {
+    if (!params || !editGasprice) return
+
+    const newGasprice = Number(editGasprice)
+    if (!Number.isFinite(newGasprice) || newGasprice <= 0) {
+      alert('Invalid gas price')
+      return
+    }
+      try {
+        setCurrentAction('updating-gasprice')
+        await setGasprice(kandelAddress, newGasprice, writeContract)
+      } catch (error) {
+        console.error('Error updating gas price:', error)
+        setCurrentAction('none')
+      }
       }
 
-      await writeContract({
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'withdrawFunds',
-        args: [baseAmount, quoteAmount, address],
-      })
-    } catch (error) {
-      console.error('Withdraw error:', error)
-      setCurrentAction('none')
-    }
-  }
-
-  // Full withdraw and de-register
-  const fullWithdraw = async () => {
-    if (!position || !address) return
-
-    setCurrentAction('full-withdraw')
+  // Handle deposit using exported function
+  const handleDeposit = async () => {
+    if (!depositBaseAmount && !depositQuoteAmount) return
 
     try {
-      // First retract all offers
-      await writeContract({
-        address: kandelAddress,
-        abi: kandelLibABI,
-        functionName: 'retractOffers',
-        args: [0n, (position.params?.pricePoints ? position.params.pricePoints - 1n : 0n)],
-      })
-    } catch (error) {
-      console.error('Full withdraw error:', error)
-      setCurrentAction('none')
-    }
-  }
-
-  // Handle transaction completion
-  useEffect(() => {
-    if (txReceipt?.status === 'success') {
-      if (currentAction === 'depositing') {
-        // If this was an approval, now do the actual deposit
-        let baseAmount = 0n
-        let quoteAmount = 0n
-        
-        try {
-          baseAmount = depositBaseAmount && Number.isFinite(Number(depositBaseAmount))
-            ? parseUnits(depositBaseAmount, position!.baseTokenInfo.decimals)
-            : 0n
-          quoteAmount = depositQuoteAmount && Number.isFinite(Number(depositQuoteAmount))
-            ? parseUnits(depositQuoteAmount, position!.quoteTokenInfo.decimals)
-            : 0n
-        } catch (error) {
-          console.error('Error parsing deposit amounts for approval completion:', error)
-          return
-        }
-        
-        writeContract({
-          address: kandelAddress,
-          abi: kandelLibABI,
-          functionName: 'depositFunds',
-          args: [baseAmount, quoteAmount],
-        })
-        return
-      }
-
-      if (currentAction === 'full-withdraw') {
-        // After retracting offers, do final withdraw
-        writeContract({
-          address: kandelAddress,
-          abi: kandelLibABI,
-          functionName: 'retractAndWithdraw',
-          args: [
-            0n, 
-            (position!.params?.pricePoints ? position!.params.pricePoints - 1n : 0n), 
-            2n**256n - 1n, // MAX_UINT
-            2n**256n - 1n, // MAX_UINT 
-            0n, // freeWei
-            address!
-          ],
-        })
-        return
-      }
-
-      // Reset states for completed actions
-      setCurrentAction('none')
-      setIsEditMode(false)
-      setShowDepositModal(false)
-      setShowWithdrawModal(false)
+      setCurrentAction('depositing')
+      await depositFunds(
+        depositBaseAmount, 
+        depositQuoteAmount, 
+        kandelAddress, 
+        baseToken, 
+        quoteToken, 
+        baseTokenInfo.decimals, 
+        quoteTokenInfo.decimals, 
+        writeContract, 
+        userAddress!
+      )
+      // Clear inputs after successful submission
       setDepositBaseAmount('')
       setDepositQuoteAmount('')
+    } catch (error) {
+      console.error('Error depositing funds:', error)
+      setCurrentAction('none')
+    }
+  }
+
+  // Handle withdraw using exported function
+  const handleWithdraw = async () => {
+    if (!withdrawBaseAmount && !withdrawQuoteAmount) return
+
+    try {
+    setCurrentAction('withdrawing')
+      await withdrawFunds(
+        withdrawBaseAmount, 
+        withdrawQuoteAmount, 
+        kandelAddress, 
+        baseTokenInfo.decimals, 
+        quoteTokenInfo.decimals, 
+        writeContract, 
+        userAddress!
+      )
+      // Clear inputs after successful submission
       setWithdrawBaseAmount('')
       setWithdrawQuoteAmount('')
+    } catch (error) {
+      console.error('Error withdrawing funds:', error)
+      setCurrentAction('none')
     }
-  }, [txReceipt])
-
-  if (!address) {
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <h3 className="text-lg font-semibold mb-4">View Kandel Position</h3>
-        <p className="text-gray-600 dark:text-gray-400">Please connect your wallet to view positions.</p>
-      </div>
-    )
   }
+
+  // Handle full withdraw using exported function
+  const handleFullWithdraw = async () => {
+    try {
+    setCurrentAction('full-withdraw')
+      await retractAndWithdraw(params, kandelAddress, writeContract, userAddress!)
+    } catch (error) {
+      console.error('Error performing full withdraw:', error)
+      setCurrentAction('none')
+    }
+  }
+
+  // Monitor transaction completion
+  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
+
+  useEffect(() => {
+    if (txReceipt && txReceipt.status === 'success') {
+      setCurrentAction('none')
+      setIsEditMode(false)
+      refetch() // Refresh data after successful transaction
+    } else if (txReceipt && txReceipt.status === 'reverted') {
+      setCurrentAction('none')
+      alert('Transaction failed')
+    }
+  }, [txReceipt, refetch])
 
   if (isLoading) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-semibold">Kandel Position</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-          >
-            ✕
-          </button>
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded"></div>
+            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-5/6"></div>
+          </div>
         </div>
-        <div className="text-center py-4">Loading position...</div>
       </div>
     )
   }
@@ -324,225 +215,213 @@ export function KandelPositionView({
   if (error) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-semibold">Kandel Position</h3>
+        <div className="text-red-600 dark:text-red-400">
+          Error loading position: {error.message || 'Unknown error'}
+        </div>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+          className="mt-4 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
           >
-            ✕
+          Back to Positions
           </button>
-        </div>
-        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg">
-          <div className="text-red-600 dark:text-red-400 font-medium">Error Loading Position</div>
-          <div className="text-sm text-red-600 dark:text-red-400 mt-1">{error}</div>
-        </div>
       </div>
     )
   }
 
-  if (!position) {
+  if (!params) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-semibold">Kandel Position</h3>
+        <div className="text-gray-600 dark:text-gray-400">
+          Position data not available
+        </div>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+          className="mt-4 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
           >
-            ✕
+          Back to Positions
           </button>
-        </div>
-        <p className="text-gray-600 dark:text-gray-400">Position not found or failed to load.</p>
       </div>
     )
   }
 
   return (
+    <div className="space-y-6">
+      {/* Header */}
     <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="text-lg font-semibold">Kandel Position</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">
+            Kandel Position: {formatTokenName(baseToken, baseTokenInfo.symbol)}/{formatTokenName(quoteToken, quoteTokenInfo.symbol)}
+          </h3>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
         >
-          ✕
+            Back to Positions
         </button>
+        </div>
+        
+        <div className="text-sm text-gray-600 dark:text-gray-400 font-mono">
+          Address: {kandelAddress}
+        </div>
       </div>
 
       {/* Position Overview */}
-      <div className="space-y-6">
-        {/* Basic Info */}
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <h4 className="font-medium mb-3">Position Details</h4>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+        <h4 className="text-lg font-semibold mb-4">Position Overview</h4>
+        
+        <div className="grid grid-cols-2 gap-6">
+          {/* Reserve Balances */}
             <div>
-              <span className="text-gray-600 dark:text-gray-400">Address:</span>
-              <div className="font-mono">{kandelAddress.slice(0, 10)}...{kandelAddress.slice(-8)}</div>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Market:</span>
-              <div>{formatTokenName(baseToken, position.baseTokenInfo.symbol)}/{formatTokenName(quoteToken, position.quoteTokenInfo.symbol)}</div>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Price Points:</span>
-              <div>{position.params?.pricePoints?.toString() || 'N/A'}</div>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Step Size:</span>
-              <div>{position.params?.stepSize?.toString() || 'N/A'}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Current Inventory */}
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <h4 className="font-medium mb-3">Current Inventory</h4>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {formatTokenName(baseToken, position.baseTokenInfo.symbol)} Reserve
+            <h5 className="font-medium mb-2">Reserve Balances</h5>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>{formatTokenName(baseToken, baseTokenInfo.symbol)}:</span>
+                <span className="font-mono">
+                  {baseReserveBalance !== undefined 
+                    ? formatUnits(baseReserveBalance, baseTokenInfo.decimals)
+                    : '0'
+                  }
+                </span>
               </div>
-              <div className="text-lg font-medium">
-                {formatUnits(position.baseReserve, position.baseTokenInfo.decimals)}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {formatTokenName(quoteToken, position.quoteTokenInfo.symbol)} Reserve
-              </div>
-              <div className="text-lg font-medium">
-                {formatUnits(position.quoteReserve, position.quoteTokenInfo.decimals)}
-              </div>
+              <div className="flex justify-between">
+                <span>{formatTokenName(quoteToken, quoteTokenInfo.symbol)}:</span>
+                <span className="font-mono">
+                  {quoteReserveBalance !== undefined 
+                    ? formatUnits(quoteReserveBalance, quoteTokenInfo.decimals)
+                    : '0'
+                  }
+                </span>
             </div>
           </div>
         </div>
 
-        {/* Live Offers */}
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-          <h4 className="font-medium mb-3">Live Offers</h4>
-          <div className="grid grid-cols-2 gap-4">
+          {/* Offered Volumes */}
             <div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {formatTokenName(baseToken, position.baseTokenInfo.symbol)} Offered (Asks)
+            <h5 className="font-medium mb-2">Offered Volumes</h5>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>{formatTokenName(baseToken, baseTokenInfo.symbol)}:</span>
+                <span className="font-mono">
+                  {baseOfferedVolume !== undefined 
+                    ? formatUnits(baseOfferedVolume, baseTokenInfo.decimals)
+                    : '0'
+                  }
+                </span>
               </div>
-              <div className="text-lg font-medium">
-                {formatUnits(position.baseOfferedVolume, position.baseTokenInfo.decimals)}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {formatTokenName(quoteToken, position.quoteTokenInfo.symbol)} Offered (Bids)
-              </div>
-              <div className="text-lg font-medium">
-                {formatUnits(position.quoteOfferedVolume, position.quoteTokenInfo.decimals)}
+              <div className="flex justify-between">
+                <span>{formatTokenName(quoteToken, quoteTokenInfo.symbol)}:</span>
+                <span className="font-mono">
+                  {quoteOfferedVolume !== undefined 
+                    ? formatUnits(quoteOfferedVolume, quoteTokenInfo.decimals)
+                    : '0'
+                  }
+                </span>
               </div>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Edit Parameters */}
+      {/* Parameters */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-lg font-semibold">Parameters</h4>
+          <button
+            onClick={() => setIsEditMode(!isEditMode)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            disabled={currentAction !== 'none'}
+          >
+            {isEditMode ? 'Cancel Edit' : 'Edit Parameters'}
+          </button>
+        </div>
+
         {isEditMode ? (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4">
-            <h4 className="font-medium mb-3">Edit Parameters</h4>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Step Size</label>
+                <label className="block text-sm font-medium mb-2">Step Size</label>
                   <input
                     type="number"
-                    min="1"
                     value={editStepSize}
                     onChange={(e) => setEditStepSize(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                   />
+                <button
+                  onClick={updateStepSize}
+                  disabled={currentAction !== 'none' || BigInt(editStepSize || '0') === BigInt(params.stepSize)}
+                  className="mt-2 w-full px-2 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                >
+                  {currentAction === 'updating-step' ? 'Updating...' : 'Update Step Size'}
+                </button>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Gas Req</label>
+                <label className="block text-sm font-medium mb-2">Gas Requirement</label>
                   <input
                     type="number"
-                    min="21000"
                     value={editGasreq}
                     onChange={(e) => setEditGasreq(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                   />
+                <button
+                  onClick={updateGasreq}
+                  disabled={currentAction !== 'none' || BigInt(editGasreq || '0') === BigInt(params.gasreq)}
+                  className="mt-2 w-full px-2 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                >
+                  {currentAction === 'updating-gasreq' ? 'Updating...' : 'Update Gas Req'}
+                </button>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Gas Price</label>
+                <label className="block text-sm font-medium mb-2">Gas Price</label>
                   <input
                     type="number"
-                    min="1"
                     value={editGasprice}
                     onChange={(e) => setEditGasprice(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                   />
-                </div>
-              </div>
-              <div className="flex space-x-2">
                 <button
-                  onClick={updateParameters}
-                  disabled={currentAction !== 'none'}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  onClick={updateGasprice}
+                  disabled={currentAction !== 'none' || BigInt(editGasprice || '0') === BigInt(params.gasprice)}
+                  className="mt-2 w-full px-2 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
                 >
-                  {currentAction === 'updating' ? 'Updating...' : 'Update Parameters'}
-                </button>
-                <button
-                  onClick={() => setIsEditMode(false)}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  Cancel
+                  {currentAction === 'updating-gasprice' ? 'Updating...' : 'Update Gas Price'}
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          /* Action Buttons */
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setIsEditMode(true)}
-              disabled={currentAction !== 'none'}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              Edit Parameters
-            </button>
-            <button
-              onClick={() => setShowDepositModal(true)}
-              disabled={currentAction !== 'none'}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              Deposit Funds
-            </button>
-            <button
-              onClick={() => setShowWithdrawModal(true)}
-              disabled={currentAction !== 'none'}
-              className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
-            >
-              Withdraw Funds
-            </button>
-            <button
-              onClick={fullWithdraw}
-              disabled={currentAction !== 'none'}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-            >
-              {currentAction === 'full-withdraw' ? 'Withdrawing...' : 'Full Withdraw & Close'}
-            </button>
+          <div className="grid grid-cols-4 gap-4">
+            <div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Price Points</div>
+              <div className="font-mono">{params.pricePoints?.toString()}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Step Size</div>
+              <div className="font-mono">{params.stepSize?.toString()}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Gas Requirement</div>
+              <div className="font-mono">{params.gasreq?.toString()}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Gas Price</div>
+              <div className="font-mono">{params.gasprice?.toString()}</div>
+            </div>
           </div>
         )}
+      </div>
 
-        {/* Deposit Modal */}
-        {showDepositModal && (
-          <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
-            <h4 className="font-medium mb-3">Deposit Funds</h4>
+      {/* Management Actions */}
+      <div className="grid grid-cols-3 gap-6">
+        {/* Deposit Funds */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+          <h4 className="text-lg font-semibold mb-4">Deposit Funds</h4>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">
-                    {formatTokenName(baseToken, position.baseTokenInfo.symbol)} Amount
+              <label className="block text-sm font-medium mb-2">
+                {formatTokenName(baseToken, baseTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
-                    step="any"
-                    min="0"
                     value={depositBaseAmount}
                     onChange={(e) => setDepositBaseAmount(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
@@ -550,101 +429,102 @@ export function KandelPositionView({
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">
-                    {formatTokenName(quoteToken, position.quoteTokenInfo.symbol)} Amount
+              <label className="block text-sm font-medium mb-2">
+                {formatTokenName(quoteToken, quoteTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
-                    step="any"
-                    min="0"
                     value={depositQuoteAmount}
                     onChange={(e) => setDepositQuoteAmount(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                     placeholder="0.0"
                   />
                 </div>
-              </div>
-              <div className="flex space-x-2">
                 <button
-                  onClick={depositFunds}
+              onClick={handleDeposit}
                   disabled={currentAction !== 'none' || (!depositBaseAmount && !depositQuoteAmount)}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
                 >
                   {currentAction === 'depositing' ? 'Depositing...' : 'Deposit'}
                 </button>
-                <button
-                  onClick={() => setShowDepositModal(false)}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
           </div>
-        )}
+        </div>
 
-        {/* Withdraw Modal */}
-        {showWithdrawModal && (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4">
-            <h4 className="font-medium mb-3">Withdraw Funds</h4>
+        {/* Withdraw Funds */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+          <h4 className="text-lg font-semibold mb-4">Withdraw Funds</h4>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">
-                    {formatTokenName(baseToken, position.baseTokenInfo.symbol)} Amount
+              <label className="block text-sm font-medium mb-2">
+                {formatTokenName(baseToken, baseTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
-                    step="any"
-                    min="0"
-                    max={formatUnits(position.baseReserve, position.baseTokenInfo.decimals)}
                     value={withdrawBaseAmount}
                     onChange={(e) => setWithdrawBaseAmount(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                     placeholder="0.0"
                   />
-                  <div className="text-xs text-gray-500 mt-1">
-                    Max: {formatUnits(position.baseReserve, position.baseTokenInfo.decimals)}
-                  </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">
-                    {formatTokenName(quoteToken, position.quoteTokenInfo.symbol)} Amount
+              <label className="block text-sm font-medium mb-2">
+                {formatTokenName(quoteToken, quoteTokenInfo.symbol)} Amount
                   </label>
                   <input
                     type="number"
-                    step="any"
-                    min="0"
-                    max={formatUnits(position.quoteReserve, position.quoteTokenInfo.decimals)}
                     value={withdrawQuoteAmount}
                     onChange={(e) => setWithdrawQuoteAmount(e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
                     placeholder="0.0"
                   />
-                  <div className="text-xs text-gray-500 mt-1">
-                    Max: {formatUnits(position.quoteReserve, position.quoteTokenInfo.decimals)}
-                  </div>
-                </div>
               </div>
-              <div className="flex space-x-2">
                 <button
-                  onClick={withdrawFunds}
+              onClick={handleWithdraw}
                   disabled={currentAction !== 'none' || (!withdrawBaseAmount && !withdrawQuoteAmount)}
-                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+              className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
                 >
                   {currentAction === 'withdrawing' ? 'Withdrawing...' : 'Withdraw'}
                 </button>
+          </div>
+        </div>
+
+        {/* Full Withdraw */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
+          <h4 className="text-lg font-semibold mb-4">Full Withdraw</h4>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              This will retract all offers and withdraw all funds and provisions. This action cannot be undone.
+            </p>
                 <button
-                  onClick={() => setShowWithdrawModal(false)}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+              onClick={handleFullWithdraw}
+              disabled={currentAction !== 'none'}
+              className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
                 >
-                  Cancel
+              {currentAction === 'full-withdraw' ? 'Withdrawing All...' : 'Withdraw All & Close Position'}
                 </button>
               </div>
             </div>
+      </div>
+
+      {/* Transaction Status */}
+      {(currentAction !== 'none' || isWritePending) && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+          <div className="text-blue-600 font-medium">Transaction in Progress</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            {currentAction === 'updating-step' && 'Updating step size...'}
+            {currentAction === 'updating-gasreq' && 'Updating gas requirement...'}
+            {currentAction === 'updating-gasprice' && 'Updating gas price...'}
+            {currentAction === 'depositing' && 'Depositing funds...'}
+            {currentAction === 'withdrawing' && 'Withdrawing funds...'}
+            {currentAction === 'full-withdraw' && 'Performing full withdrawal...'}
+          </div>
+          {txHash && (
+            <div className="text-xs text-gray-500 mt-1 font-mono">
+              Transaction: {txHash}
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }
