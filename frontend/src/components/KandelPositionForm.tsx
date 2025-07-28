@@ -388,7 +388,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     } as any
 
     const _globalConfig = {
-      gasprice: globalConfig.gasprice * BigInt(1e6),
+      gasprice: globalConfig.gasprice * BigInt(4),
     }
 
     // const _globalConfig = {

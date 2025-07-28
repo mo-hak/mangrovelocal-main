@@ -7,6 +7,7 @@ import { TokenPairDisplay, TokenDisplay } from './TokenDisplay'
 import { CONTRACTS } from '@/utils/config'
 import { formatUnits } from 'viem'
 import { Market } from '@/types/kandel'
+import { priceFromTick } from '@mangrovedao/mgv'
 
 interface OrderBookProps {
   userKandelAddresses?: `0x${string}`[]
@@ -115,12 +116,12 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
           {/* Asks (Sell Orders) - tkn0 for tkn1 */}
           <div>
             <h4 className="text-sm font-medium text-red-600 mb-2">
-              Asks (Sell <TokenDisplay address={selectedMarket.tkn0} className="text-red-600" />)
+              Asks (Sells <TokenDisplay address={selectedMarket.tkn0} className="text-red-600" />)
             </h4>
             <div className="space-y-1">
               <div className="grid grid-cols-4 text-xs text-gray-500 pb-1 border-b">
                 <span>Price</span>
-                <span>Amount</span>
+                <span><TokenDisplay address={selectedMarket.tkn0}/> Quantity</span>
                 <span>Total</span>
                 <span>Maker</span>
               </div>
@@ -133,36 +134,26 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   
                   
                   // For asks: wants tkn1, gives tkn0
-                  // Tick represents log base 2 of price ratio scaled by some factor
-                  // We need to convert this back to a human readable price
-                  const tickNumber = Number(offer.tick)
+                  // Using @mangrovedao/mgv library for proper tick-to-price conversion
+                  const tickBigInt = offer.tick
                   
-                  // Handle large tick values by using log math instead of direct power
                   let price: string
                   try {
-                    // For very large ticks, use logarithmic approach
-                    if (Math.abs(tickNumber) > 500) {
-                      // Use natural log to avoid overflow: 2^tick = e^(tick * ln(2))
-                      const logPrice = tickNumber * Math.log(2) 
-                      const tickPriceRatio = Math.exp(logPrice)
-                      
-                      if (!Number.isFinite(tickPriceRatio)) {
-                        // If still too large, approximate using scientific notation
-                        price = tickNumber > 0 ? "∞" : "0.000000"
-                      } else {
-                        // Apply decimals adjustment
-                        const decimalsAdjustment = Math.pow(10, Number(tkn1Decimals - tkn0Decimals))
-                        price = (tickPriceRatio / Math.pow(2, 96) * decimalsAdjustment).toFixed(6)
-                      }
+                    // Use priceFromTick from @mangrovedao/mgv library
+                    const rawPrice = priceFromTick(tickBigInt)
+                    
+                    if (!Number.isFinite(rawPrice)) {
+                      price = Number(tickBigInt) > 0 ? "∞" : "0.000000"
                     } else {
-                      // For smaller ticks, use the original method
-                      const tickPow = Math.pow(2, tickNumber)
-                      const tickBigInt = BigInt(Math.floor(tickPow))
-                      const decimalsAdjustment = Number(tkn1Decimals - tkn0Decimals + 96)
-                      price = (Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
+                      // Convert raw price to human-readable price
+                      // According to ticks-price.md: userPrice = rawPrice * 10^(base_decimals - quote_decimals)
+                      // For asks: base=tkn0, quote=tkn1
+                      const decimalsAdjustment = Math.pow(10, Number(tkn0Decimals - tkn1Decimals))
+                      const humanPrice = rawPrice * decimalsAdjustment
+                      price = humanPrice.toFixed(6)
                     }
                   } catch (error) {
-                    console.warn('Price calculation failed for tick:', tickNumber, error)
+                    console.warn('Price calculation failed for tick:', tickBigInt, error)
                     price = "Invalid"
                   }
                   const amount = formatUnits(offer.gives, tkn0Decimals)
@@ -197,12 +188,12 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
           {/* Bids (Buy Orders) - tkn1 for tkn0 */}
           <div>
             <h4 className="text-sm font-medium text-green-600 mb-2">
-              Bids (Buy <TokenDisplay address={selectedMarket.tkn0} className="text-green-600" />)
+              Bids (Buys <TokenDisplay address={selectedMarket.tkn0} className="text-green-600" />)
             </h4>
             <div className="space-y-1">
               <div className="grid grid-cols-4 text-xs text-gray-500 pb-1 border-b">
                 <span>Price</span>
-                <span>Amount</span>
+                <span><TokenDisplay address={selectedMarket.tkn1}/> Quantity</span>
                 <span>Total</span>
                 <span>Maker</span>
               </div>
@@ -214,18 +205,29 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                   const tkn1Decimals = token1Info.decimals
                   
                   // For bids: wants tkn0, gives tkn1
-                  const tickNumber = Number(offer.tick)
-                  const tickPow = Math.pow(2, tickNumber)
+                  // Using @mangrovedao/mgv library for proper tick-to-price conversion
+                  const tickBigInt = offer.tick
                   
-                  // Safety check to prevent Infinity conversion to BigInt
-                  if (!Number.isFinite(tickPow) || tickPow > Number.MAX_SAFE_INTEGER) {
-                    console.warn('Invalid tick value for offer:', offer.tick, 'resulting in:', tickPow)
-                    return null // Skip this offer
+                  let price: string
+                  try {
+                    // For bids, we need the inverse price according to ticks-price.md
+                    // price = 1/ratio = 1.0001^(-tick) for bids
+                    const rawPrice = priceFromTick(-tickBigInt)
+                    
+                    if (!Number.isFinite(rawPrice)) {
+                      price = Number(tickBigInt) < 0 ? "∞" : "0.000000"
+                    } else {
+                      // Convert raw price to human-readable price
+                      // According to ticks-price.md: userPrice = rawPrice * 10^(base_decimals - quote_decimals)
+                      // For bids: base=tkn0, quote=tkn1
+                      const decimalsAdjustment = Math.pow(10, Number(tkn0Decimals - tkn1Decimals))
+                      const humanPrice = rawPrice * decimalsAdjustment
+                      price = humanPrice.toFixed(6)
+                    }
+                  } catch (error) {
+                    console.warn('Price calculation failed for tick:', tickBigInt, error)
+                    price = "Invalid"
                   }
-                  
-                  const tickBigInt = BigInt(Math.floor(tickPow))
-                  const decimalsAdjustment = Number(tkn0Decimals - tkn1Decimals + 96)
-                  const price = (1 / Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn1Decimals)
                   const isMyOffer = isUserOffer(offerDetail.maker)
 

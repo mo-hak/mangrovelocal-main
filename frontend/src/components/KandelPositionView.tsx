@@ -340,8 +340,8 @@ export function KandelPositionView({
                 <span>{formatTokenName(baseToken, baseTokenInfo.symbol)}:</span>
                 <span className="font-mono">
                   {baseReserveBalance !== undefined 
-                    ? formatUnits(baseReserveBalance, baseTokenInfo.decimals)
-                    : '0'
+                    ? Number(formatUnits(baseReserveBalance, baseTokenInfo.decimals)).toFixed(6)
+                    : '0.000000'
                   }
                 </span>
               </div>
@@ -349,8 +349,8 @@ export function KandelPositionView({
                 <span>{formatTokenName(quoteToken, quoteTokenInfo.symbol)}:</span>
                 <span className="font-mono">
                   {quoteReserveBalance !== undefined 
-                    ? formatUnits(quoteReserveBalance, quoteTokenInfo.decimals)
-                    : '0'
+                    ? Number(formatUnits(quoteReserveBalance, quoteTokenInfo.decimals)).toFixed(6)
+                    : '0.000000'
                   }
                 </span>
             </div>
@@ -365,8 +365,8 @@ export function KandelPositionView({
                 <span>{formatTokenName(baseToken, baseTokenInfo.symbol)}:</span>
                 <span className="font-mono">
                   {baseOfferedVolume !== undefined 
-                    ? formatUnits(baseOfferedVolume, baseTokenInfo.decimals)
-                    : '0'
+                    ? Number(formatUnits(baseOfferedVolume, baseTokenInfo.decimals)).toFixed(6)
+                    : '0.000000'
                   }
                 </span>
               </div>
@@ -374,8 +374,8 @@ export function KandelPositionView({
                 <span>{formatTokenName(quoteToken, quoteTokenInfo.symbol)}:</span>
                 <span className="font-mono">
                   {quoteOfferedVolume !== undefined 
-                    ? formatUnits(quoteOfferedVolume, quoteTokenInfo.decimals)
-                    : '0'
+                    ? Number(formatUnits(quoteOfferedVolume, quoteTokenInfo.decimals)).toFixed(6)
+                    : '0.000000'
                   }
                 </span>
               </div>

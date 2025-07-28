@@ -62,7 +62,7 @@ The order book component provides comprehensive market visualization:
 
 **Market Data Fetching**:
 - Fetches all open markets using `MgvReader.openMarkets()`
-- Real-time offer lists for both bid and ask sides
+- Real-time offer lists for both bid and ask sides with proper ticks to price conversion using mgv tick library.
 
 **User Offer Highlighting**:
 - Blue highlighting for user's Kandel offers in the order book
@@ -180,3 +180,23 @@ Uses efficient multicall pattern via `useReadContracts` to fetch:
 - **Withdraw Funds**: `withdrawFunds()` with amount validation
 - **Parameter Modification**: `setStepSize()`, `setGasreq()`, `setGasprice()`
 - **Full Withdrawal**: `retractAndWithdraw()` for complete position closure
+
+
+
+
+At its core, Mangrove operates is an order book decentralized exchange where liquidity is not locked, and a "smart offer strategy" dictates how that liquidity behaves. Unlike traditional DEXs that lock up liquidity, Mangrove's offers are essentially promises to trade, allowing Makers(liquidity providers) to build custom strategies. For ex- A Maker can keep their assets productive in other protocols and as soon as a Taker comes to take the prommised offer, Maker's liqudity will be sourced Just-in-Time from other protocols. Kandel is another powerfull strategy discussed later.
+
+This is possible because of "smart offers" which allows arbitrary smart contract code to be attached to an offer.
+
+Offers are organized into offer lists (unlike traditional two way orderbook) with each market having two such lists: one for "asks"(e.g., selling WETH for DAI) and one for "bids" (e.g., selling DAI for WETH). Within an offer list, offers are grouped by ticks, which represent discrete price levels. The price is derived from the tick, and offers at the same tick are executed in a First-In, First-Out order.
+
+With smart offers, Makers can include defensive code to cancel a trade if market conditions have become unsatisfactory.
+But what if everyone makes empty promises, and the offers in the book are all meant to fail?
+
+Provisions: Ensuring the Credibility of Offers
+A critical component of the Mangrove engine is the provision system, which is designed to address the potential issue of "empty promises"—offers that are posted but are intended to fail.
+To ensure that the offers on the order book are credible, Makers must deposit a provision in the native token. This provision acts as a form of collateral. If an offer fails to execute when a Taker attempts to fill it, a portion of this provision, known as the bounty, is paid to the Taker as compensation for the wasted gas fees. This creates a financial disincentive for Makers to post frivolous or unreliable offers.
+
+Provision Calculation
+The amount of provision required for an offer is calculated based on the gas required for the offer's execution (gasreq) and the prevailing gas price on Mangrove. The formula is:
+
