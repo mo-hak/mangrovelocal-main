@@ -685,7 +685,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    {formatTokenName(selectedMarket.tkn0, baseTokenInfo.symbol)} Amount
+                    {formatTokenName(selectedMarket.tkn0, baseTokenInfo.symbol)} Amount (Base)
                   </label>
                   <input
                     type="number"
@@ -707,7 +707,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    {formatTokenName(selectedMarket.tkn1, quoteTokenInfo.symbol)} Amount
+                    {formatTokenName(selectedMarket.tkn1, quoteTokenInfo.symbol)} Amount (Quote)
                   </label>
                   <input
                     type="number"

@@ -32,26 +32,26 @@ export function useKandelManager(kandelAddress: `0x${string}`) {
         address: kandelAddress,
         abi: kandelLibABI,
         functionName: 'reserveBalance',
-        args: [0], // base token balance (asks)
+        args: [0], // bid token balance (asks)
       },
       {
         address: kandelAddress,
         abi: kandelLibABI,
         functionName: 'reserveBalance',
-        args: [1], // quote token balance (bids)
+        args: [1], // ask token balance (bids)
       },
       // offeredVolume(0/1) → current live liquidity per side
       {
         address: kandelAddress,
         abi: kandelLibABI,
         functionName: 'offeredVolume',
-        args: [0], // base token offered volume (asks)
+        args: [0], // bid token offered volume (asks)
       },
       {
         address: kandelAddress,
         abi: kandelLibABI,
         functionName: 'offeredVolume',
-        args: [1], // quote token offered volume (bids)
+        args: [1], // ask token offered volume (bids)
       },
     ],
     query: {
@@ -79,9 +79,9 @@ export function useKandelManager(kandelAddress: `0x${string}`) {
   }, [kandelData]);
 
   const baseQuoteTickOffset = kandelData?.[1]?.result as bigint
-  const baseReserveBalance = kandelData?.[3]?.result as bigint
-  const quoteReserveBalance = kandelData?.[2]?.result as bigint
-  const baseOfferedVolume = kandelData?.[5]?.result as bigint
+  const baseReserveBalance = kandelData?.[3]?.result as bigint 
+  const quoteReserveBalance = kandelData?.[2]?.result as bigint  
+  const baseOfferedVolume = kandelData?.[5]?.result as bigint    
   const quoteOfferedVolume = kandelData?.[4]?.result as bigint
 
   

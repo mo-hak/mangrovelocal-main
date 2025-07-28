@@ -5,8 +5,8 @@ import { erc20Abi } from '@/utils/abi/erc20'
 import { CONTRACTS, TOKENS } from '@/utils/config'
 
 export function useTokenInfo(tokenAddress: `0x${string}` | undefined) {
-  // Check if it's a known token first
-  const knownToken = tokenAddress ? Object.values(TOKENS).find(token => token.address === tokenAddress) : undefined
+  // Check if it's a known token first (case-insensitive comparison)
+  const knownToken = tokenAddress ? Object.values(TOKENS).find(token => token.address.toLowerCase() === tokenAddress.toLowerCase()) : undefined
   
   const { data: name, isLoading: nameLoading } = useReadContract({
     address: tokenAddress || '0x0',

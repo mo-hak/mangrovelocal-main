@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useOfferList, useOpenMarkets } from '@/hooks/useMangrove'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { TokenPairDisplay, TokenDisplay } from './TokenDisplay'
@@ -21,6 +21,7 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
   const markets = marketsData?.[0] || []
   const selectedMarket = markets[selectedMarketIndex]
   
+  
   // Fetch token info for selected market tokens
   const token0Info = useTokenInfo(selectedMarket?.tkn0 || '0x0')
   const token1Info = useTokenInfo(selectedMarket?.tkn1 || '0x0')
@@ -37,15 +38,19 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
     selectedMarket?.tkn1
   )
 
-  // Helper function to format token pair for display
-  const formatTokenPair = (tkn0: `0x${string}`, tkn1: `0x${string}`) => {
-    const token0 = Object.values(CONTRACTS).includes(tkn0) 
-      ? Object.values(CONTRACTS).find(addr => addr === tkn0) === CONTRACTS.WETH ? 'WETH' : 'USDC'
-      : `${tkn0.slice(0, 6)}...${tkn0.slice(-4)}`
-    const token1 = Object.values(CONTRACTS).includes(tkn1)
-      ? Object.values(CONTRACTS).find(addr => addr === tkn1) === CONTRACTS.WETH ? 'WETH' : 'USDC'  
-      : `${tkn1.slice(0, 6)}...${tkn1.slice(-4)}`
-    return `${token0}/${token1}`
+  // Token pair display component that properly uses hooks
+  const TokenPairOption = ({ market, index }: { market: Market, index: number }) => {
+    const token0Info = useTokenInfo(market.tkn0)
+    const token1Info = useTokenInfo(market.tkn1)
+    
+    const token0Symbol = token0Info.symbol || `${market.tkn0.slice(0, 6)}...${market.tkn0.slice(-4)}`
+    const token1Symbol = token1Info.symbol || `${market.tkn1.slice(0, 6)}...${market.tkn1.slice(-4)}`
+    
+    return (
+      <option key={index} value={index}>
+        {token0Symbol}/{token1Symbol}
+      </option>
+    )
   }
 
   const isUserOffer = (maker: `0x${string}`) => {
@@ -80,9 +85,7 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
             className="px-3 py-1 border rounded dark:bg-gray-700 dark:border-gray-600"
           >
             {markets.map((market, index) => (
-              <option key={index} value={index}>
-                {formatTokenPair(market.tkn0, market.tkn1)}
-              </option>
+              <TokenPairOption key={index} market={market} index={index} />
             ))}
           </select>
           <button
