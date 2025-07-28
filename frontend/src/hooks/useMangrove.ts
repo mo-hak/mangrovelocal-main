@@ -31,6 +31,7 @@ export function useOfferList(outboundToken: `0x${string}`, inboundToken: `0x${st
     ],
     query: {
       enabled: Boolean(outboundToken && inboundToken),
+      refetchInterval: 5000, // Refetch every 5 seconds
     },
   })
 }
@@ -43,23 +44,23 @@ export function useGlobalConfig() {
   })
 }
 
-export function useLocalConfig(outboundToken: `0x${string}`, inboundToken: `0x${string}`) {
-  return useReadContract({
-    address: CONTRACTS.READER,
-    abi: readerAbi,
-    functionName: 'localUnpacked',
-    args: [
-      {
-        outbound_tkn: outboundToken,
-        inbound_tkn: inboundToken,
-        tickSpacing: 1n,
-      },
-    ],
-    query: {
-      enabled: Boolean(outboundToken && inboundToken),
-    },
-  })
-}
+// export function useLocalConfig(outboundToken: `0x${string}`, inboundToken: `0x${string}`) {
+//   return useReadContract({
+//     address: CONTRACTS.READER,
+//     abi: readerAbi,
+//     functionName: 'localUnpacked',
+//     args: [
+//       {
+//         outbound_tkn: outboundToken,
+//         inbound_tkn: inboundToken,
+//         tickSpacing: 1n,
+//       },
+//     ],
+//     query: {
+//       enabled: Boolean(outboundToken && inboundToken),
+//     },
+//   })
+// }
 
 export function useMarketConfig(tkn0: `0x${string}`, tkn1: `0x${string}`) {
   return useReadContract({

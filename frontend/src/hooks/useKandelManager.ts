@@ -7,7 +7,7 @@ import { parseUnits } from 'viem'
 import { params_ggsp, Market, ValidateParamsResult } from '@/types/kandel'
 import { useMemo } from 'react'
 import { CONTRACTS } from '@/utils/config'
-import { useApproveToken } from './useERC20'
+import { approveToken } from './useERC20'
 
 // Modify parameters (section B in plan)
 export const setStepSize = async (
@@ -63,32 +63,48 @@ export const setBaseQuoteTickOffset = async (
 }
 
 // Deposit / Withdraw funds (section A in plan)
-export const depositFunds = async (
-  baseAmount: string, 
-  quoteAmount: string,
+// Step 1: Approve base token
+export const approveBaseToken = async (
+  baseAmount: string,
   kandelAddress: `0x${string}`,
   baseToken: `0x${string}`,
+  baseDecimals: number,
+  writeContract: any
+) => {
+  if (!baseAmount) return null
+  const baseAmountParsed = parseUnits(baseAmount, baseDecimals)
+  if (baseAmountParsed <= 0n) return null
+  
+  return approveToken(baseToken, kandelAddress, baseAmountParsed, writeContract)
+}
+
+// Step 2: Approve quote token
+export const approveQuoteToken = async (
+  quoteAmount: string,
+  kandelAddress: `0x${string}`,
   quoteToken: `0x${string}`,
+  quoteDecimals: number,
+  writeContract: any
+) => {
+  if (!quoteAmount) return null
+  const quoteAmountParsed = parseUnits(quoteAmount, quoteDecimals)
+  if (quoteAmountParsed <= 0n) return null
+  
+  return approveToken(quoteToken, kandelAddress, quoteAmountParsed, writeContract)
+}
+
+// Step 3: Execute deposit
+export const executeDeposit = async (
+  baseAmount: string,
+  quoteAmount: string,
+  kandelAddress: `0x${string}`,
   baseDecimals: number,
   quoteDecimals: number,
-  writeContract: any,
-  userAddress: `0x${string}`
+  writeContract: any
 ) => {
-  if (!userAddress) throw new Error('Wallet not connected')
-
   const baseAmountParsed = baseAmount ? parseUnits(baseAmount, baseDecimals) : 0n
   const quoteAmountParsed = quoteAmount ? parseUnits(quoteAmount, quoteDecimals) : 0n
 
-  // First approve tokens if needed using useApproveToken
-  if (baseAmountParsed > 0n) {
-    await useApproveToken(baseToken, kandelAddress, baseAmountParsed, writeContract)
-  }
-
-  if (quoteAmountParsed > 0n) {
-    await useApproveToken(quoteToken, kandelAddress, quoteAmountParsed, writeContract)
-  }
-
-  // Then call depositFunds
   return writeContract({
     address: kandelAddress,
     abi: kandelLibABI,
@@ -129,7 +145,6 @@ export const retractAndWithdraw = async (
   if (!userAddress) throw new Error('Wallet not connected')
   if (!params) throw new Error('Kandel parameters not loaded')
   
-  // Since params.pricePoints is uint32, it's always a number
   const maxint: bigint = 115792089237316195423570985008687907853269984665640564039457584007913129639935n
   
   // 2. Withdraw remaining inventory & accumulated provision in one go

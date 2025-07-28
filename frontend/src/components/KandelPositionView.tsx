@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { formatUnits } from 'viem'
-import { useKandelManager, setStepSize, setGasreq, setGasprice, depositFunds, withdrawFunds, retractAndWithdraw } from '@/hooks/useKandelManager'
+import { useKandelManager, setStepSize, setGasreq, setGasprice, approveBaseToken, approveQuoteToken, executeDeposit, withdrawFunds, retractAndWithdraw } from '@/hooks/useKandelManager'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 
 interface KandelPositionViewProps {
@@ -25,6 +25,7 @@ export function KandelPositionView({
   
   // Use writeContract hook for transactions
   const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
+  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
   
   // Use the useKandelManager hook for data fetching and contract interaction
   const {
@@ -40,7 +41,7 @@ export function KandelPositionView({
   } = useKandelManager(kandelAddress)
 
   // Transaction state
-  const [currentAction, setCurrentAction] = useState<'none' | 'updating-step' | 'updating-gasreq' | 'updating-gasprice' | 'depositing' | 'withdrawing' | 'full-withdraw'>('none')
+  const [currentAction, setCurrentAction] = useState<'none' | 'updating-step' | 'updating-gasreq' | 'updating-gasprice' | 'approving-base' | 'approving-quote' | 'depositing' | 'withdrawing' | 'full-withdraw'>('none')
 
   // Edit mode states
   const [isEditMode, setIsEditMode] = useState(false)
@@ -53,6 +54,9 @@ export function KandelPositionView({
   const [depositQuoteAmount, setDepositQuoteAmount] = useState<string>('')
   const [withdrawBaseAmount, setWithdrawBaseAmount] = useState<string>('')
   const [withdrawQuoteAmount, setWithdrawQuoteAmount] = useState<string>('')
+  
+  // Track last processed transaction to prevent double processing
+  const [lastProcessedTxHash, setLastProcessedTxHash] = useState<string>('')
 
   // Format token names for display
   const formatTokenName = (address: `0x${string}`, symbol?: string) => {
@@ -123,31 +127,101 @@ export function KandelPositionView({
       }
       }
 
-  // Handle deposit using exported function
+  // Handle deposit using step-by-step approach
   const handleDeposit = async () => {
     if (!depositBaseAmount && !depositQuoteAmount) return
 
     try {
-      setCurrentAction('depositing')
-      await depositFunds(
-        depositBaseAmount, 
-        depositQuoteAmount, 
-        kandelAddress, 
-        baseToken, 
-        quoteToken, 
-        baseTokenInfo.decimals, 
-        quoteTokenInfo.decimals, 
-        writeContract, 
-        userAddress!
+      // Step 1: ALWAYS approve base token first
+      setCurrentAction('approving-base')
+      await approveBaseToken(
+        depositBaseAmount,
+        kandelAddress,
+        baseToken,
+        baseTokenInfo.decimals,
+        writeContract
       )
-      // Clear inputs after successful submission
-      setDepositBaseAmount('')
-      setDepositQuoteAmount('')
+      // Transaction flow continues in useEffect when approval completes
     } catch (error) {
-      console.error('Error depositing funds:', error)
+      console.error('Error approving base token:', error)
       setCurrentAction('none')
     }
   }
+
+  // Handle transaction completion for deposit flow
+  useEffect(() => {
+    if (txReceipt && txReceipt.transactionHash !== lastProcessedTxHash) {
+      // Mark this transaction as processed
+      setLastProcessedTxHash(txReceipt.transactionHash)
+      
+      if (txReceipt.status === 'reverted') {
+        alert('Transaction failed. Please try again.')
+        setCurrentAction('none')
+        return
+      }
+      
+      if (txReceipt.status === 'success') {
+        switch (currentAction) {
+          case 'approving-base':
+            // Base token approved, now ALWAYS approve quote token
+            setCurrentAction('approving-quote')
+            setTimeout(async () => {
+              try {
+                await approveQuoteToken(
+                  depositQuoteAmount,
+                  kandelAddress,
+                  quoteToken,
+                  quoteTokenInfo.decimals,
+                  writeContract
+                )
+              } catch (error) {
+                console.error('Error approving quote token:', error)
+                setCurrentAction('none')
+              }
+            }, 1000)
+            break
+          case 'approving-quote':
+            // Both tokens approved, now execute deposit
+            setCurrentAction('depositing')
+            setTimeout(async () => {
+              try {
+                await executeDeposit(
+                  depositBaseAmount,
+                  depositQuoteAmount,
+                  kandelAddress,
+                  baseTokenInfo.decimals,
+                  quoteTokenInfo.decimals,
+                  writeContract
+                )
+              } catch (error) {
+                console.error('Error executing deposit:', error)
+                setCurrentAction('none')
+              }
+            }, 5000)
+            break
+          case 'depositing':
+            // Deposit completed successfully
+            setCurrentAction('none')
+            setDepositBaseAmount('')
+            setDepositQuoteAmount('')
+            refetch() // Refresh position data
+            break
+          case 'updating-step':
+          case 'updating-gasreq':
+          case 'updating-gasprice':
+          case 'withdrawing':
+          case 'full-withdraw':
+            // Other transaction types completed
+            setCurrentAction('none')
+            setIsEditMode(false)
+            refetch() // Refresh position data
+            break
+          default:
+            setCurrentAction('none')
+        }
+      }
+    }
+  }, [txReceipt, currentAction, lastProcessedTxHash])
 
   // Handle withdraw using exported function
   const handleWithdraw = async () => {
@@ -184,19 +258,7 @@ export function KandelPositionView({
     }
   }
 
-  // Monitor transaction completion
-  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
-
-  useEffect(() => {
-    if (txReceipt && txReceipt.status === 'success') {
-      setCurrentAction('none')
-      setIsEditMode(false)
-      refetch() // Refresh data after successful transaction
-    } else if (txReceipt && txReceipt.status === 'reverted') {
-      setCurrentAction('none')
-      alert('Transaction failed')
-    }
-  }, [txReceipt, refetch])
+  // This transaction monitoring is now handled in the deposit useEffect above
 
   if (isLoading) {
     return (

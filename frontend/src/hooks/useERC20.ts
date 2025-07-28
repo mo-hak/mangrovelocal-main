@@ -31,7 +31,7 @@ export function useTokenAllowance(tokenAddress: `0x${string}`, spender: `0x${str
   })
 }
 
-export const useApproveToken = async(Token: `0x${string}`, Address: `0x${string}`, AmountParsed: bigint, writeContract: any)=> {
+export const approveToken = async(Token: `0x${string}`, Address: `0x${string}`, AmountParsed: bigint, writeContract: any)=> {
   if (AmountParsed > 0n) {
     return await writeContract({
       address: Token,

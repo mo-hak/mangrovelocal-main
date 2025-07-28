@@ -25,13 +25,13 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
   const token1Info = useTokenInfo(selectedMarket?.tkn1 || '0x0')
   
   // Fetch offers for selected market (bids: tkn1 -> tkn0)
-  const { data: bidsData, isLoading: bidsLoading } = useOfferList(
+  const { data: bidsData, isLoading: bidsLoading, refetch: refetchBids } = useOfferList(
     selectedMarket?.tkn1,
     selectedMarket?.tkn0
   )
   
   // Fetch offers for selected market (asks: tkn0 -> tkn1) 
-  const { data: asksData, isLoading: asksLoading } = useOfferList(
+  const { data: asksData, isLoading: asksLoading, refetch: refetchAsks } = useOfferList(
     selectedMarket?.tkn0,
     selectedMarket?.tkn1
   )
@@ -72,17 +72,29 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
     <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold">Order Book</h3>
-        <select
-          value={selectedMarketIndex}
-          onChange={(e) => setSelectedMarketIndex(parseInt(e.target.value))}
-          className="px-3 py-1 border rounded dark:bg-gray-700 dark:border-gray-600"
-        >
-          {markets.map((market, index) => (
-            <option key={index} value={index}>
-              {formatTokenPair(market.tkn0, market.tkn1)}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedMarketIndex}
+            onChange={(e) => setSelectedMarketIndex(parseInt(e.target.value))}
+            className="px-3 py-1 border rounded dark:bg-gray-700 dark:border-gray-600"
+          >
+            {markets.map((market, index) => (
+              <option key={index} value={index}>
+                {formatTokenPair(market.tkn0, market.tkn1)}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              refetchBids();
+              refetchAsks();
+            }}
+            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+            disabled={bidsLoading || asksLoading}
+          >
+            {(bidsLoading || asksLoading) ? '⟳' : '↻'}
+          </button>
+        </div>
         {selectedMarket && (
           <div className="text-sm text-gray-500 mt-1">
             <TokenPairDisplay 
@@ -112,28 +124,50 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                 <span>Total</span>
                 <span>Maker</span>
               </div>
-              {asksData && asksData[2] && asksData[2].length > 0 ? (
+              {asksData && asksData.length >= 4 && asksData[2] && asksData[2].length > 0 ? (
                 asksData[2].slice(0, 10).map((offer, index) => {
                   const offerId = asksData[1][index]
                   const offerDetail = asksData[3][index]
                   const tkn0Decimals = token0Info.decimals
                   const tkn1Decimals = token1Info.decimals
                   
+                  
                   // For asks: wants tkn1, gives tkn0
+                  // Tick represents log base 2 of price ratio scaled by some factor
+                  // We need to convert this back to a human readable price
                   const tickNumber = Number(offer.tick)
-                  const tickPow = Math.pow(2, tickNumber)
                   
-                  // Safety check to prevent Infinity conversion to BigInt
-                  if (!Number.isFinite(tickPow) || tickPow > Number.MAX_SAFE_INTEGER) {
-                    console.warn('Invalid tick value for offer:', offer.tick, 'resulting in:', tickPow)
-                    return null // Skip this offer
+                  // Handle large tick values by using log math instead of direct power
+                  let price: string
+                  try {
+                    // For very large ticks, use logarithmic approach
+                    if (Math.abs(tickNumber) > 500) {
+                      // Use natural log to avoid overflow: 2^tick = e^(tick * ln(2))
+                      const logPrice = tickNumber * Math.log(2) 
+                      const tickPriceRatio = Math.exp(logPrice)
+                      
+                      if (!Number.isFinite(tickPriceRatio)) {
+                        // If still too large, approximate using scientific notation
+                        price = tickNumber > 0 ? "∞" : "0.000000"
+                      } else {
+                        // Apply decimals adjustment
+                        const decimalsAdjustment = Math.pow(10, Number(tkn1Decimals - tkn0Decimals))
+                        price = (tickPriceRatio / Math.pow(2, 96) * decimalsAdjustment).toFixed(6)
+                      }
+                    } else {
+                      // For smaller ticks, use the original method
+                      const tickPow = Math.pow(2, tickNumber)
+                      const tickBigInt = BigInt(Math.floor(tickPow))
+                      const decimalsAdjustment = Number(tkn1Decimals - tkn0Decimals + 96)
+                      price = (Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
+                    }
+                  } catch (error) {
+                    console.warn('Price calculation failed for tick:', tickNumber, error)
+                    price = "Invalid"
                   }
-                  
-                  const tickBigInt = BigInt(Math.floor(tickPow))
-                  const decimalsAdjustment = Number(tkn1Decimals - tkn0Decimals + 96)
-                  const price = (Number(formatUnits(tickBigInt, decimalsAdjustment))).toFixed(6)
                   const amount = formatUnits(offer.gives, tkn0Decimals)
                   const isMyOffer = isUserOffer(offerDetail.maker)
+
 
                   return (
                     <div 
@@ -172,7 +206,7 @@ export function OrderBook({ userKandelAddresses = [] }: OrderBookProps) {
                 <span>Total</span>
                 <span>Maker</span>
               </div>
-              {bidsData && bidsData[2] && bidsData[2].length > 0 ? (
+              {bidsData && bidsData.length >= 4 && bidsData[2] && bidsData[2].length > 0 ? (
                 bidsData[2].slice(0, 10).map((offer, index) => {
                   const offerId = bidsData[1][index]
                   const offerDetail = bidsData[3][index]

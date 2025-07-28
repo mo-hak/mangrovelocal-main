@@ -2,12 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useConfig } from 'wagmi'
-import { readContract } from 'wagmi/actions'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { useOpenMarkets, useGlobalConfig, useMarketConfig } from '@/hooks/useMangrove'
 import { deployKandel, populateKandel } from '@/hooks/useKandelManager'
-import { useApproveToken } from '@/hooks/useERC20'
-import { CONTRACTS } from '@/utils/config'
+import { approveToken } from '@/hooks/useERC20'
 import { parseUnits, formatUnits, decodeEventLog } from 'viem'
 
 // Import MGV library functions
@@ -22,8 +20,6 @@ import {
 import { ValidateParamsResult } from '@/types/kandel'
 
 import { kandelSeederABI } from '@/utils/abi/kandelSeeder'
-import { kandelLibABI } from '@/utils/abi/kandelLib'
-import { erc20Abi } from '@/utils/abi/erc20'
 
 interface KandelPositionFormProps {
   onPositionCreated?: () => void
@@ -142,26 +138,25 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
         setIsValidating(true)
         setValidationError('')
 
-        // Phase 1: Call validateKandelParams with mock amounts to get minimums
+        // Phase 1: Call validateKandelParams to get minimums
         const positionParams: RawKandelPositionParams = {
           market: setup.market,
           minPrice: parseFloat(minPrice),
           maxPrice: parseFloat(maxPrice),
           midPrice: parseFloat(midPrice),
           pricePoints: BigInt(pricePoints),
-          adjust: true
+          adjust: true //to find the closest price match
         } as any
 
-        // Phase 1 validation with mock amounts to get minimums
         const phase1ValidationParams: RawKandelParams = {
           ...positionParams,
-          baseAmount: BigInt(0), // Mock amount as per doc
-          quoteAmount: BigInt(0), // Mock amount as per doc 
+          baseAmount: BigInt(0), // Mock amount to get minimums
+          quoteAmount: BigInt(0), // Mock amount to get minimums 
           stepSize: BigInt(stepSize),
-          gasreq: 121413n,
-          factor: 1, // 100% of minVolume
-          asksLocalConfig: setup.asksLocalConfigData,
-          bidsLocalConfig: setup.bidsLocalConfigData,
+          gasreq: 121413n, //As per docs
+          factor: 1, // 100% of minVolume, can be set to 1.n for a n% buffer.
+          asksLocalConfig: setup.asksLocalConfigData,// fetched from config01 from mgvReader marketConfig function
+          bidsLocalConfig: setup.bidsLocalConfigData, // fetched from config10 from mgvReader marketConfig function
           // marketConfig: globalConfig!,
           marketConfig: setup._globalConfig,
         } as any
@@ -297,7 +292,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
     try {
       const amount = parseUnits(baseAmount, baseTokenInfo.decimals)
-      await useApproveToken(selectedMarket.tkn0, addressToUse, amount, writeContract)
+      await approveToken(selectedMarket.tkn0, addressToUse, amount, writeContract)
     } catch (error) {
       console.error('Base token approval error:', error)
       setCurrentStep('form')
@@ -316,7 +311,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
     try {
       const amount = parseUnits(quoteAmount, quoteTokenInfo.decimals)
-      await useApproveToken(selectedMarket.tkn1, addressToUse, amount, writeContract)
+      await approveToken(selectedMarket.tkn1, addressToUse, amount, writeContract)
     } catch (error) {
       console.error('Quote token approval error:', error)
       setCurrentStep('form')
@@ -347,10 +342,10 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     }
   }
 
-  // Helper function to create validation setup (removes redundancy between phase 1 and 2)
+  // Helper function to create validation setup
   const createValidationSetup = () => {
     if (!selectedMarket || !baseTokenInfo.decimals || !quoteTokenInfo.decimals || 
-        !baseTokenInfo.symbol || !quoteTokenInfo.symbol || !marketConfigData) {
+        !baseTokenInfo.symbol || !quoteTokenInfo.symbol || !marketConfigData || !globalConfig) {
       return null
     }
 
@@ -393,8 +388,12 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     } as any
 
     const _globalConfig = {
-      gasprice: 600n,
+      gasprice: globalConfig.gasprice * BigInt(1e6),
     }
+
+    // const _globalConfig = {
+    //   gasprice: 600n,
+    // }
 
     return {
       market,
@@ -454,12 +453,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
 
   // Handle transaction completion
   useEffect(() => {
-    // console.log('🔍 Transaction receipt updated:', {
-    //   txReceipt: !!txReceipt,
-    //   status: txReceipt?.status,
-    //   currentStep: currentStep,
-    //   txHash: txHash
-    // })
     
     if (txReceipt) {
       if (txReceipt.status === 'reverted') {

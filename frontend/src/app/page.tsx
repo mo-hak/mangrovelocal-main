@@ -4,8 +4,15 @@ import { WalletConnect } from '@/components/WalletConnect'
 import { OrderBook } from '@/components/OrderBook'
 import { KandelPositionManager } from '@/components/KandelPositionManager'
 import ErrorBoundary from '@/components/ErrorBoundary'
+import { useUserPositions } from '@/hooks/useUserPositions'
 
 export default function Home() {
+  // Fetch user's Kandel positions to get their addresses
+  const { positions: userPositions } = useUserPositions()
+  
+  // Extract Kandel addresses from user positions
+  const userKandelAddresses = userPositions.map(position => position.address)
+
   return (
     <ErrorBoundary>
     <main className="container mx-auto px-4 py-8">
@@ -18,7 +25,7 @@ export default function Home() {
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
-          <OrderBook />
+          <OrderBook userKandelAddresses={userKandelAddresses} />
           <div>
             <KandelPositionManager />
           </div>
