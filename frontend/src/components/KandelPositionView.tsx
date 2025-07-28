@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { useWaitForTransactionReceipt } from 'wagmi'
 import { formatUnits } from 'viem'
-import { useKandelManager, setStepSize, setGasreq, setGasprice, approveBaseToken, approveQuoteToken, executeDeposit, withdrawFunds, retractAndWithdraw } from '@/hooks/useKandelManager'
+import { useKandelManager } from '@/hooks/useKandelManager'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 
 interface KandelPositionViewProps {
@@ -19,13 +19,8 @@ export function KandelPositionView({
   quoteToken, 
   onClose 
 }: KandelPositionViewProps) {
-  const { address } = useAccount()
   const baseTokenInfo = useTokenInfo(baseToken)
   const quoteTokenInfo = useTokenInfo(quoteToken)
-  
-  // Use writeContract hook for transactions
-  const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
-  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
   
   // Use the useKandelManager hook for data fetching and contract interaction
   const {
@@ -37,8 +32,21 @@ export function KandelPositionView({
     isLoading,
     error,
     refetch,
+    txHash,
+    isWritePending,
     userAddress,
+    // Hook methods
+    setStepSize,
+    setGasreq,
+    setGasprice,
+    approveBaseToken,
+    approveQuoteToken,
+    executeDeposit,
+    withdrawFunds,
+    retractAndWithdraw,
   } = useKandelManager(kandelAddress)
+  
+  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
 
   // Transaction state
   const [currentAction, setCurrentAction] = useState<'none' | 'updating-step' | 'updating-gasreq' | 'updating-gasprice' | 'approving-base' | 'approving-quote' | 'depositing' | 'withdrawing' | 'full-withdraw'>('none')
@@ -84,7 +92,7 @@ export function KandelPositionView({
 
       try {
         setCurrentAction('updating-step')
-        await setStepSize(kandelAddress, newStepSize, writeContract)
+        await setStepSize(newStepSize)
       } catch (error) {
         console.error('Error updating step size:', error)
         setCurrentAction('none')
@@ -102,7 +110,7 @@ export function KandelPositionView({
       }
       try {
         setCurrentAction('updating-gasreq')
-        await setGasreq(kandelAddress, newGasreq, writeContract)
+        await setGasreq(newGasreq)
       } catch (error) {
         console.error('Error updating gas requirement:', error)
         setCurrentAction('none')
@@ -120,7 +128,7 @@ export function KandelPositionView({
     }
       try {
         setCurrentAction('updating-gasprice')
-        await setGasprice(kandelAddress, newGasprice, writeContract)
+        await setGasprice(newGasprice)
       } catch (error) {
         console.error('Error updating gas price:', error)
         setCurrentAction('none')
@@ -136,10 +144,8 @@ export function KandelPositionView({
       setCurrentAction('approving-base')
       await approveBaseToken(
         depositBaseAmount,
-        kandelAddress,
         baseToken,
-        baseTokenInfo.decimals,
-        writeContract
+        baseTokenInfo.decimals
       )
       // Transaction flow continues in useEffect when approval completes
     } catch (error) {
@@ -169,10 +175,8 @@ export function KandelPositionView({
               try {
                 await approveQuoteToken(
                   depositQuoteAmount,
-                  kandelAddress,
                   quoteToken,
-                  quoteTokenInfo.decimals,
-                  writeContract
+                  quoteTokenInfo.decimals
                 )
               } catch (error) {
                 console.error('Error approving quote token:', error)
@@ -188,10 +192,8 @@ export function KandelPositionView({
                 await executeDeposit(
                   depositBaseAmount,
                   depositQuoteAmount,
-                  kandelAddress,
                   baseTokenInfo.decimals,
-                  quoteTokenInfo.decimals,
-                  writeContract
+                  quoteTokenInfo.decimals
                 )
               } catch (error) {
                 console.error('Error executing deposit:', error)
@@ -232,11 +234,8 @@ export function KandelPositionView({
       await withdrawFunds(
         withdrawBaseAmount, 
         withdrawQuoteAmount, 
-        kandelAddress, 
         baseTokenInfo.decimals, 
-        quoteTokenInfo.decimals, 
-        writeContract, 
-        userAddress!
+        quoteTokenInfo.decimals
       )
       // Clear inputs after successful submission
       setWithdrawBaseAmount('')
@@ -251,7 +250,7 @@ export function KandelPositionView({
   const handleFullWithdraw = async () => {
     try {
     setCurrentAction('full-withdraw')
-      await retractAndWithdraw(params, kandelAddress, writeContract, userAddress!)
+      await retractAndWithdraw()
     } catch (error) {
       console.error('Error performing full withdraw:', error)
       setCurrentAction('none')

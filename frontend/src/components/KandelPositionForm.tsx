@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useConfig } from 'wagmi'
+import { useWaitForTransactionReceipt, useConfig } from 'wagmi'
 import { useTokenInfo } from '@/hooks/useTokenInfo'
 import { useOpenMarkets, useGlobalConfig, useMarketConfig } from '@/hooks/useMangrove'
-import { deployKandel, populateKandel } from '@/hooks/useKandelManager'
-import { approveToken } from '@/hooks/useERC20'
+import { useKandelPositionCreation } from '@/hooks/useKandelPositionCreation'
 import { parseUnits, formatUnits, decodeEventLog } from 'viem'
 
 // Import MGV library functions
@@ -26,10 +25,19 @@ interface KandelPositionFormProps {
 }
 
 export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProps = {}) {
-  const { address } = useAccount()
-  const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract()
-  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
   const config = useConfig()
+  
+  // Use the position creation hook
+  const {
+    txHash,
+    isWritePending,
+    userAddress,
+    deployKandel,
+    approveTokenForKandel,
+    populateKandel,
+  } = useKandelPositionCreation()
+  
+  const { data: txReceipt } = useWaitForTransactionReceipt({ hash: txHash })
   
   // Handle hydration mismatch
   const [mounted, setMounted] = useState(false)
@@ -274,7 +282,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     setCurrentStep('deploying')
 
     try {
-      await deployKandel(selectedMarket, writeContract)
+      await deployKandel(selectedMarket)
     } catch (error) {
       console.error('Deploy Kandel error:', error)
       setCurrentStep('form')
@@ -291,8 +299,12 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     setCurrentStep('approving-base')
 
     try {
-      const amount = parseUnits(baseAmount, baseTokenInfo.decimals)
-      await approveToken(selectedMarket.tkn0, addressToUse, amount, writeContract)
+      await approveTokenForKandel(
+        selectedMarket.tkn0,
+        addressToUse,
+        baseAmount,
+        baseTokenInfo.decimals
+      )
     } catch (error) {
       console.error('Base token approval error:', error)
       setCurrentStep('form')
@@ -310,8 +322,12 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     setCurrentStep('approving-quote')
 
     try {
-      const amount = parseUnits(quoteAmount, quoteTokenInfo.decimals)
-      await approveToken(selectedMarket.tkn1, addressToUse, amount, writeContract)
+      await approveTokenForKandel(
+        selectedMarket.tkn1,
+        addressToUse,
+        quoteAmount,
+        quoteTokenInfo.decimals
+      )
     } catch (error) {
       console.error('Quote token approval error:', error)
       setCurrentStep('form')
@@ -333,8 +349,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
       await populateKandel(
         addressToUse,
         finalValidationResult,
-        globalConfig,
-        writeContract
+        globalConfig
       )
     } catch (error) {
       setValidationError('Transaction submission failed: ' + (error as Error).message)
@@ -536,7 +551,7 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
     )
   }
 
-  if (!address) {
+  if (!userAddress) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
         <h3 className="text-lg font-semibold mb-4">Create Kandel Position</h3>
@@ -597,7 +612,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                     }
                   }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="1500"
                 />
                 <div className="text-xs text-gray-500 mt-1">Lower bound of price range</div>
               </div>
@@ -615,7 +629,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                     }
                   }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="2000"
                 />
                 <div className="text-xs text-gray-500 mt-1">Current market price</div>
               </div>
@@ -633,7 +646,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                     }
                   }}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="2500"
                 />
                 <div className="text-xs text-gray-500 mt-1">Upper bound of price range</div>
               </div>
@@ -687,7 +699,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                       }
                     }}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                    placeholder="0.1"
                   />
                   <div className="text-xs text-gray-500 mt-1">
                     Minimum required: {phase1ValidationResult.minBaseAmount ? formatUnits(phase1ValidationResult.minBaseAmount, baseTokenInfo.decimals) : '0'}
@@ -710,7 +721,6 @@ export function KandelPositionForm({ onPositionCreated }: KandelPositionFormProp
                       }
                     }}
                     className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
-                    placeholder="100"
                   />
                   <div className="text-xs text-gray-500 mt-1">
                     Minimum required: {phase1ValidationResult.minQuoteAmount ? formatUnits(phase1ValidationResult.minQuoteAmount, quoteTokenInfo.decimals) : '0'}
