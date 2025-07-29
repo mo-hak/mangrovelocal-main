@@ -62,7 +62,7 @@ Scenario B: An Ask is Taken (Selling High)
 
 Conversely, when one of Kandel's asks is taken, the contract sends the base tokens (USDC) and receives the quote tokens (ETH).
 
-The newly received quote tokens are then used to post a new Bid offer at a lower price point on the grid (one step below the ask that was just filled).
+The newly received quote tokens are then used to post a new Bid offer at a lower price point on the grid.
 
 This dynamic ensures that as the market price moves, Kandel continuously repositions its liquidity(upto Price point) to maintain a series of bids below the market price and asks above it, always ready to trade.
 
