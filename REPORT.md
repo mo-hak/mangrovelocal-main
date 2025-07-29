@@ -91,7 +91,7 @@ The application is built using modern web technologies:
 - **Blockchain Integration**: wagmi 2.0 + viem 2.0 for Web3 interactions
 - **Styling**: Tailwind CSS for responsive design
 - **State Management**: React Query (@tanstack/react-query) for efficient data fetching
-- **Onchian Integration**: Smart Contracts and @mangrovedao/mgv library for Kandel-specific utilities
+- **Onchian Interaction**: Smart Contracts and @mangrovedao/mgv library for Kandel-specific utilities
 
 ### 2. Core Feature Implementation
 
