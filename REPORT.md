@@ -42,7 +42,7 @@ $$\text{provision} = \max(\text{gasprice}_{\text{mgv}}, \text{gasprice}_{\text{o
 
 During development, I encountered some challenges with provision calculations for Kandel offers. The Mangrove library calculates provisions using the globally stored gasprice only. Initially, position creation transactions were failing on Anvil with the stored gasprice value of `1`.
 
-I suspected the issue was related to the formula expecting gasprice in Mwei, so I converted it to `1e6`. While this worked, I realized it was also working with a gasprice value of 600 (from Base testnet), which is significantly lower than `10^6`. Through trial and error, the minimum integer multiplier that worked for successful transactions was `gasprice * 4`.
+I suspected the issue was related to the formula expecting gasprice in Mwei, so I converted it to `1e6`. While this worked, I realized it was also working with a gasprice value of 600 (I inititally took this value from Base testnet to see if it works for local deployed system but it just worked because of how formula works taking maximum of gasprices), which is significantly lower than `10^6`. Through trial and error, the minimum integer multiplier that worked for successful transactions was `gasprice * 4`.
 
 Due to time constraints, I couldn't dive deeper into debugging this specific issue. This remains an area for further debugging for me.
 
